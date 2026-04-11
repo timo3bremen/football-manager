@@ -1,0 +1,86 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Football Manager - Dashboard</title>
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; margin: 20px; }
+    h1 { color: #2c3e50; }
+    .col { float: left; width: 45%; margin-right: 5%; }
+    .box { background: #f7f9fb; padding: 10px; border-radius: 6px; margin-bottom: 16px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 6px; border-bottom: 1px solid #e1e8ee; }
+    .clear { clear: both; }
+  </style>
+</head>
+<body>
+  <h1>Football Manager - Dashboard</h1>
+  <p>Local development dashboard - shows players, teams, auctions and DB rows.</p>
+
+  <div class="col">
+    <div class="box">
+      <h2>Players</h2>
+      <table id="players"><thead><tr><th>ID</th><th>Name</th><th>Rating</th><th>Potential</th><th>Form</th></tr></thead><tbody></tbody></table>
+    </div>
+
+    <div class="box">
+      <h2>Dummy Players (DB)</h2>
+      <table id="dbplayers"><thead><tr><th>ID</th><th>Name</th><th>Rating</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="box">
+      <h2>Teams</h2>
+      <table id="teams"><thead><tr><th>ID</th><th>Name</th><th>Budget</th></tr></thead><tbody></tbody></table>
+    </div>
+
+    <div class="box">
+      <h2>Auctions</h2>
+      <pre id="auctions">loading...</pre>
+    </div>
+  </div>
+
+  <div class="clear"></div>
+
+  <script>
+    async function load(url){
+      const res = await fetch(url);
+      if(!res.ok) return null;
+      return res.json();
+    }
+
+    function fillTable(id, rows, cols){
+      const tbody = document.querySelector(id + ' tbody');
+      tbody.innerHTML = '';
+      (rows||[]).forEach(r => {
+        const tr = document.createElement('tr');
+        cols.forEach(c => {
+          const td = document.createElement('td');
+          td.textContent = (r[c] !== undefined && r[c] !== null) ? r[c] : '';
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+    }
+
+    async function refresh(){
+      const players = await load('/api/players') || [];
+      fillTable('#players', players, ['id','name','rating','potential','form']);
+
+      const teams = await load('/api/teams') || [];
+      fillTable('#teams', teams, ['id','name','budget']);
+
+      const dummy = await load('/api/db/dummy') || [];
+      fillTable('#dbplayers', dummy, ['ID','NAME','RATING']);
+
+      const auctions = await load('/api/auctions') || [];
+      document.getElementById('auctions').textContent = JSON.stringify(auctions, null, 2);
+    }
+
+    refresh();
+    setInterval(refresh, 5000);
+  </script>
+</body>
+</html>
