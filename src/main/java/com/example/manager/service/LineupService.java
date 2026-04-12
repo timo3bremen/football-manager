@@ -48,6 +48,19 @@ public class LineupService {
 			Integer slotIndex = entry.getKey();
 			Long playerId = entry.getValue();  // kann null sein!
 
+			// Validiere: Wenn playerId nicht null ist, muss der Spieler existieren und zum Team gehören
+			if (playerId != null) {
+				Player player = playerRepository.findById(playerId).orElse(null);
+				if (player == null) {
+					System.out.println("[LineupService] WARNING: Player " + playerId + " does not exist! Skipping this slot.");
+					continue;  // Überspringe diesen Slot, da der Spieler nicht existiert
+				}
+				if (!player.getTeamId().equals(teamId)) {
+					System.out.println("[LineupService] WARNING: Player " + playerId + " does not belong to team " + teamId + "! Skipping this slot.");
+					continue;  // Überspringe, wenn der Spieler nicht zum Team gehört
+				}
+			}
+
 			LineupSlotId id = new LineupSlotId(teamId, formationId, slotIndex);
 
 			// Versuche zu laden
@@ -197,7 +210,7 @@ public class LineupService {
 	}
 
 	/**
-	 * Validiert ob eine Aufstellung gültig ist (alle Spieler gehören zum Team).
+	 * Validiert eine Aufstellung.
 	 */
 	public boolean validateLineup(Long teamId, String formationId) {
 		List<LineupSlot> slots = lineupRepository.findByTeamIdAndFormationId(teamId, formationId);
@@ -212,5 +225,36 @@ public class LineupService {
 			}
 		}
 		return true;
+	}
+
+	/**
+	 * Bereinigt alte/gelöschte Spieler-IDs aus allen Lineups eines Teams.
+	 * Entfernt alle Lineup-Slots, die Player-IDs referenzieren, die nicht mehr existieren.
+	 * 
+	 * @param teamId Die Team-ID
+	 * @return Anzahl der gelöschten Slot-Einträge
+	 */
+	@Transactional
+	public int cleanupInvalidPlayerIds(Long teamId) {
+		List<LineupSlot> allSlots = lineupRepository.findByTeamId(teamId);
+		int deletedCount = 0;
+
+		System.out.println("[LineupService] Cleanup: Found " + allSlots.size() + " lineup slots for team " + teamId);
+
+		for (LineupSlot slot : allSlots) {
+			if (slot.getPlayerId() != null) {
+				// Prüfe ob der Spieler noch existiert
+				boolean exists = playerRepository.existsById(slot.getPlayerId());
+				if (!exists) {
+					System.out.println("[LineupService] Cleanup: Removing invalid player " + slot.getPlayerId() 
+						+ " from lineup slot " + slot.getTeamId() + "/" + slot.getFormationId() + "/" + slot.getSlotIndex());
+					lineupRepository.deleteById(new LineupSlotId(slot.getTeamId(), slot.getFormationId(), slot.getSlotIndex()));
+					deletedCount++;
+				}
+			}
+		}
+
+		System.out.println("[LineupService] Cleanup: Deleted " + deletedCount + " invalid lineup entries");
+		return deletedCount;
 	}
 }

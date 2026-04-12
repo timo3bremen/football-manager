@@ -1,5 +1,6 @@
 package com.example.manager.controller;
 
+import com.example.manager.service.LineupService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -15,9 +16,11 @@ import java.util.Map;
 public class DbController {
 
     private final JdbcTemplate jdbc;
+    private final LineupService lineupService;
 
-    public DbController(JdbcTemplate jdbc) {
+    public DbController(JdbcTemplate jdbc, LineupService lineupService) {
         this.jdbc = jdbc;
+        this.lineupService = lineupService;
     }
 
     @GetMapping("/dummy")
@@ -44,5 +47,21 @@ public class DbController {
         List<Map<String, Object>> rows = jdbc.queryForList("SELECT * FROM DUMMY_TEAM WHERE ID = ?", id);
         if (rows.isEmpty()) return ResponseEntity.notFound().build();
         return ResponseEntity.ok(rows.get(0));
+    }
+
+    /**
+     * Cleanup-Endpoint: Entfernt alle alten/gelöschten Spieler-IDs aus den Lineups eines Teams.
+     * GET /api/db/cleanup/team/{teamId}
+     */
+    @GetMapping("/cleanup/team/{teamId}")
+    public ResponseEntity<?> cleanupTeamLineups(@PathVariable Long teamId) {
+        System.out.println("[DbController] cleanup called for teamId=" + teamId);
+        int deletedCount = lineupService.cleanupInvalidPlayerIds(teamId);
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "message", "Cleanup completed",
+            "teamId", teamId,
+            "deletedInvalidPlayerIds", deletedCount
+        ));
     }
 }

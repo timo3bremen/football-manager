@@ -104,9 +104,47 @@ body{
 
 ul{padding-left:18px}
 
+/* Clock */
+.clock{
+  background: linear-gradient(180deg, rgba(6,182,212,0.1), rgba(124,58,237,0.1));
+  border: 1px solid rgba(6,182,212,0.3);
+  border-radius: 10px;
+  padding: 12px 16px;
+  text-align: right;
+  min-width: 180px;
+  box-shadow: 0 4px 12px rgba(6,182,212,0.08);
+}
+
+.clock-time{
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--accent);
+  font-family: 'Courier New', monospace;
+  line-height: 1.2;
+}
+
+.clock-date{
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 4px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
 @media (max-width:720px){
   .columns{flex-direction:column}
   .app-container{margin:12px}
+  .clock{
+    min-width: 140px;
+    padding: 8px 12px;
+  }
+  .clock-time{
+    font-size: 14px;
+  }
+  .clock-date{
+    font-size: 10px;
+  }
 }
 
 /* small helper */

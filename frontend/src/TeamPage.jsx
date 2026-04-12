@@ -100,14 +100,14 @@ export default function TeamPage(){
           <h4>Spieler (Roster)</h4>
           <div className="draggable-hint">Ziehe Spieler auf das Feld oder hierher, um sie abzusetzen.</div>
           <ul className="roster-list">
-            {roster.map(p => (
-              <li key={p.id} className="roster-item" draggable onDragStart={(e)=>onDragStartFromRoster(e,p.id)}>
-                <div style={{flex:1}}>
-                  <div>{p.name}</div>
-                  <div style={{fontSize: '0.85em', color:'var(--muted)'}}>{p.position} • Rating: {p.rating}</div>
-                </div>
-              </li>
-            ))}
+             {roster.map(p => (
+               <li key={p.id} className="roster-item" draggable onDragStart={(e)=>onDragStartFromRoster(e,p.id)}>
+                 <div style={{flex:1}}>
+                   <div>{p.name}</div>
+                   <div style={{fontSize: '0.85em', color:'var(--muted)'}}>{p.position} • {p.country} • Rating: {p.rating}</div>
+                 </div>
+               </li>
+             ))}
           </ul>
         </div>
       </div>

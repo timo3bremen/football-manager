@@ -2,6 +2,7 @@ package com.example.manager.service;
 
 import com.example.manager.model.*;
 import com.example.manager.repository.*;
+import com.example.manager.util.PlayerNameGenerator;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -160,12 +161,18 @@ public class RepositoryService {
                 // 1 GK, 4 DEF, 7 MID, 6 FWD
                 String[] positions = {"GK", "DEF", "DEF", "DEF", "DEF", "MID", "MID", "MID", "MID", "MID", "MID", "MID", "FWD", "FWD", "FWD", "FWD", "FWD", "FWD"};
                 
+                // Generate 18 random fictional players with random names and countries
                 for (int i = 0; i < 18; i++) {
-                    Player p = new Player("Spieler " + (i + 1), 
-                            50 + (int) (Math.random() * 40),
-                            50 + (int) (Math.random() * 50), 
-                            0,
-                            positions[i]);
+                    String[] playerData = PlayerNameGenerator.generatePlayerNameAndCountry();
+                    
+                    Player p = new Player(
+                        playerData[0],  // Random name
+                        50 + (int) (Math.random() * 40),  // Rating 50-90
+                        50 + (int) (Math.random() * 50),  // Potential 50-100
+                        (int) (Math.random() * 20) - 10,  // Form -10 to +10
+                        positions[i],
+                        playerData[1]   // Random country
+                    );
                     p.setTeamId(saved.getId());
                     playerRepository.save(p);
                 }

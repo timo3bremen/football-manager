@@ -30,6 +30,9 @@ public class Player {
     
     // player position: GK, DEF, MID, FWD
     private String position;
+    
+    // player country
+    private String country;
 
     public Player() {
     }
@@ -58,13 +61,23 @@ public class Player {
         this.position = position;
     }
     
-    public Player(long id, String name, int rating, int potential, int form, String position) {
+    public Player(String name, int rating, int potential, int form, String position, String country) {
+        this.name = name;
+        this.rating = rating;
+        this.potential = potential;
+        this.form = form;
+        this.position = position;
+        this.country = country;
+    }
+    
+    public Player(long id, String name, int rating, int potential, int form, String position, String country) {
         this.id = id;
         this.name = name;
         this.rating = rating;
         this.potential = potential;
         this.form = form;
         this.position = position;
+        this.country = country;
     }
 
     public Long getId() {
@@ -123,8 +136,16 @@ public class Player {
         this.position = position;
     }
 
+    public String getCountry() {
+        return country;
+    }
+
+    public void setCountry(String country) {
+        this.country = country;
+    }
+
     @Override
     public String toString() {
-        return "Player{" + "id=" + id + ", name='" + name + '\'' + ", rating=" + rating + ", potential=" + potential + ", form=" + form + ", position='" + position + '\'' + '}';
+        return "Player{" + "id=" + id + ", name='" + name + '\'' + ", rating=" + rating + ", potential=" + potential + ", form=" + form + ", position='" + position + '\'' + ", country='" + country + '\'' + '}';
     }
 }
