@@ -17,6 +17,9 @@ import java.util.List;
 public class ManagerController {
 
     private final ManagerService service;
+    
+    @org.springframework.beans.factory.annotation.Value("${dev.authless:false}")
+    private boolean devAuthless;
 
     public ManagerController(ManagerService service) {
         this.service = service;
@@ -72,8 +75,14 @@ public class ManagerController {
 
     @PostMapping("/teams/{id}/state")
     public ResponseEntity<?> saveState(@PathVariable("id") long id, @RequestBody String json, @RequestHeader(value="X-Auth-Token", required=false) String token) {
+        // allow dev-mode (no auth) when dev.authless=true
+        if (token == null) {
+            if (!devAuthless) return ResponseEntity.status(401).body("missing token");
+            // in devAuthless mode allow saving without token
+            service.saveGameState(id, json);
+            return ResponseEntity.ok("saved (dev-mode)");
+        }
         // require token and ensure token owner matches team id
-        if (token == null) return ResponseEntity.status(401).body("missing token");
         Long ownerTeam = service.getTeamIdForToken(token);
         if (ownerTeam == null || ownerTeam != id) return ResponseEntity.status(403).body("forbidden");
         service.saveGameState(id, json);

@@ -5,79 +5,87 @@ import com.example.manager.dto.CreateAuctionRequest;
 import com.example.manager.model.Player;
 import com.example.manager.model.Team;
 import com.example.manager.model.TransferAuction;
-import com.example.manager.repository.InMemoryRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class ManagerService {
 
-    private final InMemoryRepository repo = new InMemoryRepository();
+    @Autowired
+    private RepositoryService repositoryService;
+    
+    // Temporary in-memory auction storage (TODO: migrate to DB via TransferAuctionRepository)
+    private final Map<Long, TransferAuction> auctions = new ConcurrentHashMap<>();
     private final Random rnd = new Random();
 
     public List<Player> listPlayers() {
-        return repo.listPlayers();
+        return repositoryService.listPlayers();
     }
 
     public Player getPlayer(long id) {
-        return repo.getPlayer(id);
+        return repositoryService.getPlayer(id);
     }
 
     public List<Team> listTeams() {
-        return repo.listTeams();
+        return repositoryService.listTeams();
     }
 
     public List<TransferAuction> listAuctions() {
-        return repo.listAuctions();
+        return new ArrayList<>(auctions.values());
     }
 
     public String registerUser(String username, String password, String teamName) {
-        // create team
         Team t = new Team(teamName, 100000);
-        repo.saveTeam(t);
-        return repo.registerUser(username, password, t.getId());
+        t = repositoryService.saveTeam(t);
+        return repositoryService.registerUser(username, password, t.getId());
     }
 
     public String loginUser(String username, String password){
-        return repo.authenticateUser(username, password);
+        return repositoryService.authenticateUser(username, password);
     }
 
     public Long getTeamIdForToken(String token){
-        return repo.getTeamIdForToken(token);
+        return repositoryService.getTeamIdForToken(token);
     }
 
     public Team getTeamById(long id){
-        return repo.getTeam(id);
+        return repositoryService.getTeam(id);
     }
 
-    // simple game state persistence (stores JSON blob per team id)
     public void saveGameState(long teamId, String json) {
-        repo.saveGameState(teamId, json);
+        repositoryService.saveGameState(teamId, json);
     }
 
     public String getGameState(long teamId) {
-        return repo.getGameState(teamId);
+        return repositoryService.getGameState(teamId);
     }
 
     public void clearUsers(){
-        repo.clearUsers();
+        repositoryService.clearUsers();
     }
 
     public TransferAuction createAuction(CreateAuctionRequest req) {
-        Player p = repo.getPlayer(req.getPlayerId());
+        Player p = repositoryService.getPlayer(req.getPlayerId());
         if (p == null) throw new IllegalArgumentException("player not found");
         Instant expires = Instant.now().plusSeconds(req.getDurationSeconds());
-        return repo.createAuction(p, req.getSellerTeamId(), expires);
+        
+        TransferAuction auction = new TransferAuction(p, req.getSellerTeamId(), expires);
+        auctions.put(auction.getId(), auction);
+        return auction;
     }
 
     public TransferAuction placeBid(long auctionId, BidRequest req) {
-        TransferAuction a = repo.getAuction(auctionId);
+        TransferAuction a = auctions.get(auctionId);
         if (a == null) throw new IllegalArgumentException("auction not found");
-        Team bidder = repo.getTeam(req.getTeamId());
+        Team bidder = repositoryService.getTeam(req.getTeamId());
         if (bidder == null) throw new IllegalArgumentException("team not found");
         // simple budget check
         if (bidder.getBudget() < req.getAmount()) throw new IllegalArgumentException("insufficient budget");
@@ -100,12 +108,12 @@ public class ManagerService {
     }
 
     private void cpuBidding() {
-        List<TransferAuction> auctions = repo.listAuctions();
-        for (TransferAuction a : auctions) {
+        List<TransferAuction> auctionList = new ArrayList<>(auctions.values());
+        for (TransferAuction a : auctionList) {
             // skip auctions that are about to expire (less than 2s)
             if (a.getExpiresAt().isBefore(Instant.now().plusSeconds(2))) continue;
             // pick a random CPU team (not seller)
-            List<Team> teams = repo.listTeams();
+            List<Team> teams = repositoryService.listTeams();
             if (teams.isEmpty()) continue;
             Team cpu = teams.get(rnd.nextInt(teams.size()));
             if (cpu.getId() == a.getSellerTeamId()) continue;
@@ -122,38 +130,46 @@ public class ManagerService {
     }
 
     public void processExpiredAuctions() {
-        List<TransferAuction> auctions = repo.listAuctions();
+        List<TransferAuction> auctionList = new ArrayList<>(auctions.values());
         Instant now = Instant.now();
-        for (TransferAuction a : auctions) {
+        for (TransferAuction a : auctionList) {
             if (a.getExpiresAt().isBefore(now) || a.getExpiresAt().equals(now)) {
                 TransferAuction.Bid winner = a.getHighestBid();
                 if (winner != null) {
-                    Team buyer = repo.getTeam(winner.bidderTeamId);
-                    Team seller = repo.getTeam(a.getSellerTeamId());
+                    Team buyer = repositoryService.getTeam(winner.bidderTeamId);
+                    Team seller = repositoryService.getTeam(a.getSellerTeamId());
                     if (buyer != null && buyer.getBudget() >= winner.amount) {
                         // transfer player
                         buyer.addPlayer(a.getPlayer());
                         buyer.setBudget(buyer.getBudget() - winner.amount);
+                        repositoryService.saveTeam(buyer);
                         if (seller != null) {
                             seller.setBudget(seller.getBudget() + winner.amount);
+                            repositoryService.saveTeam(seller);
                         }
                     } else {
                         // if buyer invalid, return player to seller
-                        if (seller != null) seller.addPlayer(a.getPlayer());
+                        if (seller != null) {
+                            seller.addPlayer(a.getPlayer());
+                            repositoryService.saveTeam(seller);
+                        }
                     }
                 } else {
                     // no bids: return player to seller
-                    Team seller = repo.getTeam(a.getSellerTeamId());
-                    if (seller != null) seller.addPlayer(a.getPlayer());
+                    Team seller = repositoryService.getTeam(a.getSellerTeamId());
+                    if (seller != null) {
+                        seller.addPlayer(a.getPlayer());
+                        repositoryService.saveTeam(seller);
+                    }
                 }
-                repo.removeAuction(a.getId());
+                auctions.remove(a.getId());
             }
         }
     }
 
     // simple growth simulation: apply small increases based on potential
     public void simulateTrainingTick() {
-        for (Player p : repo.listPlayers()) {
+        for (Player p : repositoryService.listPlayers()) {
             int growthChance = rnd.nextInt(100);
             if (growthChance < Math.max(1, p.getPotential() / 10)) {
                 int delta = 1 + rnd.nextInt(3);
@@ -162,6 +178,7 @@ public class ManagerService {
             // random form fluctuations
             int formDelta = rnd.nextInt(3) - 1; // -1,0,1
             p.setForm(Math.max(-10, Math.min(10, p.getForm() + formDelta)));
+            repositoryService.savePlayer(p);
         }
     }
 }

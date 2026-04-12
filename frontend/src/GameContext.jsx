@@ -6,17 +6,6 @@ export function useGame(){
   return useContext(GameContext)
 }
 
-function makePlayer(id, idx){
-  const positions = ['GK','DEF','MID','FWD']
-  const pos = positions[Math.floor(Math.random()*positions.length)]
-  return {
-    id: id,
-    name: `Spieler ${idx}`,
-    position: pos,
-    rating: Math.floor(50 + Math.random()*40),
-  }
-}
-
 export function GameProvider({children}){
   const [team, setTeam] = useState(null)
   const [roster, setRoster] = useState([])
@@ -83,14 +72,15 @@ export function GameProvider({children}){
       try{ return typeof a === 'string' ? a : JSON.parse(JSON.stringify(a)) }catch(e){ return String(a) }
     })
     const entry = { ts: Date.now(), tag: 'GameContext', data: serializable }
-    // always store logs locally (only when debug enabled)
-    if (debugEnabled) appendLogEntry(entry)
+    // always store logs locally (persistent ringbuffer)
+    appendLogEntry(entry)
+    // print to console only when debug enabled
     if (debugEnabled) console.log('[GameContext]', ...args)
   }
 
-  // expose quick helpers on window when debugging enabled
+  // expose quick helpers on window for convenience
   try{
-    if (typeof window !== 'undefined' && debugEnabled){
+    if (typeof window !== 'undefined'){
       window.fmExportLogs = exportLogs
       window.fmGetLogs = getLogs
       window.fmClearLogs = clearLogs
@@ -110,10 +100,8 @@ export function GameProvider({children}){
 
   function createTeam(name){
     const newTeam = { name, id: Date.now() }
-    // generate a roster of 18 players
-    const players = Array.from({length:18}).map((_,i)=> makePlayer(`p-${Date.now()}-${i}`, i+1))
+    // Note: Don't generate roster here - it will be loaded from server
     setTeam(newTeam)
-    setRoster(players)
     // initialize default formation
     const defaultFormation = '4-4-2'
     const rows = buildFormationRows(defaultFormation)
@@ -131,7 +119,7 @@ export function GameProvider({children}){
     try{ localStorage.setItem('fm_currentTeam', JSON.stringify(newTeam)) }catch(e){}
     // also persist initial state locally so refresh immediately restores roster
     try{
-      const initState = { roster: players, lineup: slots, formationRows: rows, currentFormation: defaultFormation, stadiumParts: parts, sponsors: [], balance, transactions, jersey, stadiumEntryPrice, fanFriendship }
+      const initState = { roster: [], lineup: slots, formationRows: rows, currentFormation: defaultFormation, stadiumParts: parts, sponsors: [], balance, transactions, jersey, stadiumEntryPrice, fanFriendship }
       localStorage.setItem(localStateKey(newTeam.id), JSON.stringify(initState))
       log('createTeam: persisted initState', newTeam.id, initState)
     }catch(e){}
@@ -169,19 +157,64 @@ export function GameProvider({children}){
     })()
   }, [])
 
-  // persist/load state to backend per team id
-  async function saveStateToServer(teamId, state){
+  // if no team is set, try to restore a local unsaved state (fm_state_local)
+  useEffect(()=>{
     try{
-      log('saveStateToServer: attempt', teamId)
-      const authRaw = localStorage.getItem('fm_auth')
-      const token = authRaw ? JSON.parse(authRaw).token : null
-      const headers = { 'Content-Type':'application/json' }
-      if (token) headers['X-Auth-Token'] = token
-      await fetch(`http://localhost:8080/api/teams/${teamId}/state`, {
-        method: 'POST', headers, body: JSON.stringify(state)
-      })
-      log('saveStateToServer: done', teamId)
-    }catch(e){ console.error('saveState failed', e) }
+      const raw = localStorage.getItem(localStateKey(null))
+      if (!raw) return
+      const parsed = JSON.parse(raw)
+      log('restoring local unsaved state on mount', parsed && Object.keys(parsed))
+      if (parsed.roster) setRoster(parsed.roster)
+      if (parsed.lineup) setLineup(parsed.lineup)
+      if (parsed.currentFormation) setFormation(parsed.currentFormation)
+      if (parsed.formationRows) setFormationRows(parsed.formationRows)
+      if (parsed.stadiumParts) setStadiumParts(parsed.stadiumParts)
+      if (parsed.sponsors) setSponsors(parsed.sponsors)
+      if (typeof parsed.balance === 'number') setBalance(parsed.balance)
+      if (parsed.transactions) setTransactions(parsed.transactions)
+      if (parsed.jersey) setJersey(parsed.jersey)
+      if (parsed.stadiumEntryPrice) setStadiumEntryPrice(parsed.stadiumEntryPrice)
+      if (typeof parsed.fanFriendship === 'number') setFanFriendship(parsed.fanFriendship)
+    }catch(e){ log('restore local unsaved state failed', e) }
+  }, [])
+
+  // persist lineup to backend
+  async function saveLineupToDB(teamId, state){
+    try{
+      log('saveLineupToDB: attempt', teamId)
+      
+      if (state.lineup && state.currentFormation) {
+        try {
+          const lineupPayload = {
+            currentFormation: state.currentFormation,
+            lineup: state.lineup,
+            formationRows: state.formationRows
+          };
+          
+          const authRaw = localStorage.getItem('fm_auth')
+          const token = authRaw ? JSON.parse(authRaw).token : null
+          const headers = { 'Content-Type':'application/json' }
+          if (token) headers['X-Auth-Token'] = token
+          
+          const lineupResponse = await fetch(`http://localhost:8080/api/lineups/${teamId}/save`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(lineupPayload)
+          });
+          
+          if (lineupResponse.ok) {
+            const result = await lineupResponse.json();
+            log('Lineup saved to DB:', result);
+          } else {
+            console.error('Failed to save lineup:', await lineupResponse.text());
+          }
+        } catch (lineupError) {
+          console.error('Error saving lineup:', lineupError);
+        }
+      }
+      
+      log('saveLineupToDB: done', teamId)
+    }catch(e){ console.error('saveLineupToDB failed', e) }
   }
 
   // localStorage key helper: use a stable local key when no teamId is present
@@ -189,19 +222,31 @@ export function GameProvider({children}){
     return `fm_state_${teamId ? teamId : 'local'}`
   }
 
-  async function loadStateFromServer(teamId){
+  async function loadLineupFromDB(teamId, formationId){
     try{
-      log('loadStateFromServer: attempt', teamId)
+      log('loadLineupFromDB: attempt', teamId, formationId)
       const authRaw = localStorage.getItem('fm_auth')
       const token = authRaw ? JSON.parse(authRaw).token : null
       const headers = {}
       if (token) headers['X-Auth-Token'] = token
-      const res = await fetch(`http://localhost:8080/api/teams/${teamId}/state`, { headers })
-      if (!res.ok){ log('loadStateFromServer: no state on server', teamId, res.status); return null }
-      const text = await res.text()
-      log('loadStateFromServer: got', teamId, text && text.length)
-      try { return JSON.parse(text) } catch(e) { return text }
-    }catch(e){ console.error('loadState failed', e); return null }
+      
+      // Lade die Lineup von der DB - das ist die Source of Truth
+      // WICHTIG: formationId ist erforderlich!
+      try {
+        const lineupRes = await fetch(`http://localhost:8080/api/lineups/${teamId}/${formationId}/map`, { headers })
+        if (lineupRes.ok) {
+          const lineupData = await lineupRes.json()
+          log('loadLineupFromDB: loaded lineup from DB', teamId, formationId, lineupData)
+          return lineupData
+        } else {
+          log('loadLineupFromDB: failed to load lineup from DB', lineupRes.status)
+        }
+      } catch (lineupError) {
+        log('loadLineupFromDB: error loading lineup', lineupError.message)
+      }
+      
+      return null
+    }catch(e){ console.error('loadLineupFromDB failed', e); return null }
   }
 
   // auto-save whenever important state changes (debounced)
@@ -209,89 +254,96 @@ export function GameProvider({children}){
     if (!team || !team.id) return
     const timer = setTimeout(()=>{
       const state = { lineup, stadiumParts, sponsors, balance, transactions, jersey, currentFormation, formationRows, stadiumEntryPrice, fanFriendship, roster }
-      // save to server (if authenticated) and to localStorage as fallback
+      // save lineup to DB and to localStorage as fallback
       log('autosave: saving state', team.id, { lineup })
-      saveStateToServer(team.id, state)
+      saveLineupToDB(team.id, state)
       try{ localStorage.setItem(localStateKey(team.id), JSON.stringify(state)); log('autosave: wrote local state', localStateKey(team.id)) }catch(e){ log('autosave: local write failed', e) }
     }, 600)
     return () => clearTimeout(timer)
   }, [team && team.id, lineup, stadiumParts, sponsors, balance, transactions, jersey, currentFormation, stadiumEntryPrice, fanFriendship, roster])
 
-  // when a team is set, first apply local cached state immediately, then try to fetch server state and override
-  useEffect(()=>{
-    if (!team || !team.id) return
-    // apply local immediately; prefer team-specific key, fall back to local key and migrate
-    try{
-      const teamKey = localStateKey(team.id)
-      let raw = localStorage.getItem(teamKey)
-      if (!raw){
-        // try legacy/local key
-        raw = localStorage.getItem(localStateKey(null))
-        if (raw){
-          log('migrating local state into team key', teamKey)
-          // migrate to team-specific key for future loads
-          try{ localStorage.setItem(teamKey, raw); localStorage.removeItem(localStateKey(null)) }catch(e){ log('migration failed', e) }
-        }
-      }
-      if (raw){
-        log('loading local cached state for team', team.id)
-        const parsed = JSON.parse(raw)
-        if (parsed.roster) setRoster(parsed.roster)
-        if (parsed.lineup) setLineup(parsed.lineup)
-        if (parsed.currentFormation) setFormation(parsed.currentFormation)
-        if (parsed.formationRows) setFormation(parsed.formationRows)
-        if (parsed.stadiumParts) setStadiumParts(parsed.stadiumParts)
-        if (parsed.sponsors) setSponsors(parsed.sponsors)
-        if (typeof parsed.balance === 'number') setBalance(parsed.balance)
-        if (parsed.transactions) setTransactions(parsed.transactions)
-        if (parsed.jersey) setJersey(parsed.jersey)
-        if (parsed.stadiumEntryPrice) setStadiumEntryPrice(parsed.stadiumEntryPrice)
-        if (typeof parsed.fanFriendship === 'number') setFanFriendship(parsed.fanFriendship)
-      } else {
-        log('no local cached state for team', team.id)
-      }
-    }catch(e){ log('error applying local cached state', e) }
+   // when formation changes, reload lineup from DB
+   useEffect(()=>{
+     if (!team || !team.id || !currentFormation) return
+     (async ()=>{
+       const lineupData = await loadLineupFromDB(team.id, currentFormation)
+       if (lineupData) {
+         log('Formation changed: reloading lineup from DB', team.id, currentFormation, lineupData)
+         setLineup(lineupData)
+       } else {
+         log('No lineup in DB for team', team.id, 'formation', currentFormation)
+       }
+     })()
+   }, [team && team.id, currentFormation])
 
-    // then fetch server state and override if present
-    (async ()=>{
-      const s = await loadStateFromServer(team.id)
-      if (!s) return
-      if (s.roster) setRoster(s.roster)
-      if (s.lineup) setLineup(s.lineup)
-      if (s.currentFormation) setFormation(s.currentFormation)
-      else if (s.formationRows) setFormationRows(s.formationRows)
-      if (s.stadiumParts) setStadiumParts(s.stadiumParts)
-      if (s.sponsors) setSponsors(s.sponsors)
-      if (typeof s.balance === 'number') setBalance(s.balance)
-      if (s.transactions) setTransactions(s.transactions)
-      if (s.jersey) setJersey(s.jersey)
-      if (s.stadiumEntryPrice) setStadiumEntryPrice(s.stadiumEntryPrice)
-      if (typeof s.fanFriendship === 'number') setFanFriendship(s.fanFriendship)
-      // if after server load roster is still empty, initialize default roster/state
-      setTimeout(()=>{
-        if ((!s.roster || s.roster.length === 0) && roster.length === 0){
-          // initialize a default roster and lineup for this existing team
-          const players = Array.from({length:18}).map((_,i)=> makePlayer(`p-${team.id}-${Date.now()}-${i}`, i+1))
-          setRoster(players)
-          const defaultFormation = '4-4-2'
-          const rows = buildFormationRows(defaultFormation)
-          const slots = {}
-          rows.flat().forEach(sid => slots[sid] = null)
-          setLineup(slots)
-          setFormationRows(rows)
-          setCurrentFormation(defaultFormation)
-          const parts = Array.from({length:30}).map(()=>({ built:false, type:null, offers:null, acceptedOffer:null }))
-          setStadiumParts(parts)
-          setSponsors([])
-          setJersey({ color: 'weiß' })
-          // save newly created initial state to server and local
-          const initState = { roster: players, lineup: slots, formationRows: rows, currentFormation: defaultFormation, stadiumParts: parts, sponsors: [], balance, transactions, jersey, stadiumEntryPrice, fanFriendship }
-          saveStateToServer(team.id, initState)
-          try{ localStorage.setItem(localStateKey(team.id), JSON.stringify(initState)); log('initialized empty state for existing team', team.id) }catch(e){ log('failed to persist init state', e) }
-        }
-      }, 50)
-    })()
-  }, [team && team.id])
+   // ...existing code...
+   useEffect(()=>{
+     if (!team || !team.id) return
+     // apply local immediately; prefer team-specific key, fall back to local key and migrate
+     try{
+       const teamKey = localStateKey(team.id)
+       let raw = localStorage.getItem(teamKey)
+       if (!raw){
+         // try legacy/local key
+         raw = localStorage.getItem(localStateKey(null))
+         if (raw){
+           log('migrating local state into team key', teamKey)
+           // migrate to team-specific key for future loads
+           try{ localStorage.setItem(teamKey, raw); localStorage.removeItem(localStateKey(null)) }catch(e){ log('migration failed', e) }
+         }
+       }
+       if (raw){
+         log('loading local cached state for team', team.id)
+         const parsed = JSON.parse(raw)
+         if (parsed.roster) setRoster(parsed.roster)
+         // NICHT: if (parsed.lineup) setLineup(parsed.lineup)  - wir laden die Lineup von der DB!
+         if (parsed.currentFormation) setFormation(parsed.currentFormation)
+         if (parsed.formationRows) setFormationRows(parsed.formationRows)
+         if (parsed.stadiumParts) setStadiumParts(parsed.stadiumParts)
+         if (parsed.sponsors) setSponsors(parsed.sponsors)
+         if (typeof parsed.balance === 'number') setBalance(parsed.balance)
+         if (parsed.transactions) setTransactions(parsed.transactions)
+         if (parsed.jersey) setJersey(parsed.jersey)
+         if (parsed.stadiumEntryPrice) setStadiumEntryPrice(parsed.stadiumEntryPrice)
+         if (typeof parsed.fanFriendship === 'number') setFanFriendship(parsed.fanFriendship)
+       } else {
+         log('no local cached state for team', team.id)
+       }
+     }catch(e){ log('error applying local cached state', e) }
+
+     // then fetch lineup from DB and apply it
+     (async ()=>{
+       const lineupData = await loadLineupFromDB(team.id, currentFormation)
+       if (lineupData) {
+         log('Setting lineup from DB', team.id, currentFormation, lineupData)
+         setLineup(lineupData)
+       } else {
+         log('No lineup in DB for team', team.id, 'formation', currentFormation)
+       }
+       
+       // Load players from DB if roster is empty
+       if (roster.length === 0){
+         try {
+           log('Loading players from DB for team ' + team.id)
+           const authRaw = localStorage.getItem('fm_auth')
+           const token = authRaw ? JSON.parse(authRaw).token : null
+           const headers = {}
+           if (token) headers['X-Auth-Token'] = token
+           
+           const playersRes = await fetch(`http://localhost:8080/api/v2/players/team/${team.id}`, { headers })
+           if (playersRes.ok) {
+             const teamPlayers = await playersRes.json()
+             if (teamPlayers.length > 0) {
+               log('Loaded ' + teamPlayers.length + ' players from DB')
+               setRoster(teamPlayers)
+             }
+           }
+         } catch (e) {
+           log('Failed to load players from DB:', e)
+         }
+       }
+     })()
+   }, [team && team.id])
 
   // formation helper
   const formations = {
@@ -306,11 +358,11 @@ export function GameProvider({children}){
 
   function setFormation(name){
     const rows = buildFormationRows(name)
-    const slots = {}
-    rows.flat().forEach(sid => slots[sid] = null)
-    setLineup(slots)
     setFormationRows(rows)
     setCurrentFormation(name)
+    // Nicht hier die Lineup löschen! Sie wird vom Backend geladen
+    // Die Slots werden von loadLineupFromDB geladen
+    // Und die Lineup wird im useEffect neu geladen wenn currentFormation sich ändert
   }
 
   function assignPlayerToSlot(slotId, playerId){
@@ -321,14 +373,8 @@ export function GameProvider({children}){
       // assign
       next[slotId] = playerId
 
-      // persist immediately (local + server)
-        try{
-          const state = { lineup: next, stadiumParts, sponsors, balance, transactions, jersey, currentFormation, formationRows, stadiumEntryPrice, fanFriendship, roster }
-          if (team && team.id) saveStateToServer(team.id, state)
-          // persist under a stable key: if team exists use team-specific key, otherwise use fm_state_local
-          localStorage.setItem(localStateKey(team && team.id), JSON.stringify(state))
-          log('assignPlayerToSlot', { teamId: team && team.id, slotId, playerId, prev, next })
-        }catch(e){ log('assignPlayerToSlot: persist failed', e) }
+      // Nicht hier speichern! Der autosave Effect kümmert sich darum
+      log('assignPlayerToSlot', { teamId: team && team.id, slotId, playerId, prev, next })
 
       return next
     })
@@ -341,12 +387,8 @@ export function GameProvider({children}){
       const b = next[slotB]
       next[slotA] = b
       next[slotB] = a
-       try{
-         const state = { lineup: next, stadiumParts, sponsors, balance, transactions, jersey, currentFormation, formationRows, stadiumEntryPrice, fanFriendship, roster }
-         if (team && team.id) saveStateToServer(team.id, state)
-         localStorage.setItem(localStateKey(team && team.id), JSON.stringify(state))
-         log('swapSlots', { teamId: team && team.id, slotA, slotB, prev, next })
-       }catch(e){ log('swapSlots: persist failed', e) }
+      // Nicht hier speichern! Der autosave Effect kümmert sich darum
+      log('swapSlots', { teamId: team && team.id, slotA, slotB, prev, next })
       return next
     })
   }
@@ -354,12 +396,8 @@ export function GameProvider({children}){
   function removePlayerFromSlot(slotId){
     setLineup(prev => {
       const next = {...prev, [slotId]: null}
-       try{
-         const state = { lineup: next, stadiumParts, sponsors, balance, transactions, jersey, currentFormation, formationRows, stadiumEntryPrice, fanFriendship, roster }
-         if (team && team.id) saveStateToServer(team.id, state)
-         localStorage.setItem(localStateKey(team && team.id), JSON.stringify(state))
-         log('removePlayerFromSlot', { teamId: team && team.id, slotId, prev, next })
-       }catch(e){ log('removePlayerFromSlot: persist failed', e) }
+      // Nicht hier speichern! Der autosave Effect kümmert sich darum
+      log('removePlayerFromSlot', { teamId: team && team.id, slotId, prev, next })
       return next
     })
   }

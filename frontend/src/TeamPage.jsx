@@ -4,6 +4,13 @@ import { useGame } from './GameContext'
 export default function TeamPage(){
   const { roster, lineup, formationRows, currentFormation, setFormation, assignPlayerToSlot, swapSlots, removePlayerFromSlot } = useGame()
 
+  // Debug logging
+  React.useEffect(() => {
+    console.log('[TeamPage] Roster:', roster)
+    console.log('[TeamPage] Lineup:', lineup)
+    console.log('[TeamPage] FormationRows:', formationRows)
+  }, [roster, lineup, formationRows])
+
   const assignedCount = useMemo(() => Object.values(lineup || {}).filter(Boolean).length, [lineup])
 
   const formations = ['4-4-2','4-3-3','3-5-2']
@@ -13,7 +20,11 @@ export default function TeamPage(){
   }
 
   function onDragStartFromSlot(e, slotId){
-    const playerId = lineup[slotId]
+    const playerId = lineup && lineup[slotId]
+    if (!playerId) {
+      e.preventDefault()
+      return
+    }
     e.dataTransfer.setData('application/json', JSON.stringify({playerId, fromSlot: slotId}))
   }
 
@@ -65,34 +76,36 @@ export default function TeamPage(){
             {formationRows.map((row,ri)=> (
               <div key={ri} className="pitch-row">
                 {row.map(slotId => {
-                  const pid = lineup[slotId]
-                  const player = roster.find(r=>r.id===pid)
-                  return (
-                    <div key={slotId}
-                      className={`slot ${!player ? 'empty' : ''}`}
-                      draggable={!!player}
-                      onDragStart={player ? (e)=>onDragStartFromSlot(e, slotId) : undefined}
-                      onDragOver={(e)=>e.preventDefault()}
-                      onDrop={(e)=>onDropToSlot(e, slotId)}
-                      title={slotId}
-                    >
-                      {player ? (<div>{player.name} <div className="draggable-hint">{player.position}</div></div>) : (<div className="muted">{slotId}</div>)}
-                    </div>
-                  )
-                })}
+                   const pid = lineup[slotId]
+                   const player = roster.find(r => r.id === pid || String(r.id) === String(pid))
+                   return (
+                     <div key={slotId}
+                       className={`slot ${!player ? 'empty' : ''}`}
+                       draggable={!!player}
+                       onDragStart={player ? (e)=>onDragStartFromSlot(e, slotId) : undefined}
+                       onDragOver={(e)=>e.preventDefault()}
+                       onDrop={(e)=>onDropToSlot(e, slotId)}
+                       title={slotId}
+                     >
+                       {player ? (<div>{player.name} <div className="draggable-hint">{player.position}</div></div>) : (<div className="muted">{slotId}</div>)}
+                     </div>
+                   )
+                 })}
               </div>
             ))}
           </div>
         </div>
 
-        <div className="col-1 card" onDragOver={(e)=>e.preventDefault()} onDrop={onDropToRoster}>
+         <div className="col-1 card" onDragOver={(e)=>e.preventDefault()} onDrop={onDropToRoster}>
           <h4>Spieler (Roster)</h4>
           <div className="draggable-hint">Ziehe Spieler auf das Feld oder hierher, um sie abzusetzen.</div>
           <ul className="roster-list">
             {roster.map(p => (
               <li key={p.id} className="roster-item" draggable onDragStart={(e)=>onDragStartFromRoster(e,p.id)}>
-                <div style={{flex:1}}>{p.name}</div>
-                <div style={{color:'var(--muted)'}}>{p.position}</div>
+                <div style={{flex:1}}>
+                  <div>{p.name}</div>
+                  <div style={{fontSize: '0.85em', color:'var(--muted)'}}>{p.position} • Rating: {p.rating}</div>
+                </div>
               </li>
             ))}
           </ul>

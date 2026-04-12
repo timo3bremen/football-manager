@@ -2,29 +2,51 @@ package com.example.manager.model;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.Optional;
 
+import jakarta.persistence.*;
+
+@Entity
+@Table(name = "teams")
 public class Team {
 
-    private static final AtomicLong ID_GEN = new AtomicLong(1);
-
-    private final long id;
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
     private String name;
+    
+    @Transient
     private List<Player> squad = new ArrayList<>();
+    
+    @Transient
+    private List<Lineup> lineups = new ArrayList<>();
+    
     private int budget; // simple integer budget
 
     public Team() {
-        this.id = ID_GEN.getAndIncrement();
     }
 
     public Team(String name, int budget) {
-        this.id = ID_GEN.getAndIncrement();
         this.name = name;
         this.budget = budget;
     }
 
-    public long getId() {
+    /**
+     * Construct a team with an explicit id (used when loading from DB).
+     */
+    public Team(long id, String name, int budget) {
+        this.id = id;
+        this.name = name;
+        this.budget = budget;
+    }
+
+    public Long getId() {
         return id;
+    }
+    
+    public void setId(Long id) {
+        this.id = id;
     }
 
     public String getName() {
@@ -41,6 +63,25 @@ public class Team {
 
     public void setSquad(List<Player> squad) {
         this.squad = squad;
+    }
+
+    public List<Lineup> getLineups() {
+        return lineups;
+    }
+
+    public void setLineups(List<Lineup> lineups) {
+        this.lineups = lineups;
+    }
+
+    public Optional<Lineup> getLineupByFormation(String formationId){
+        if (formationId == null) return Optional.empty();
+        return lineups.stream().filter(l -> formationId.equals(l.getFormationId())).findFirst();
+    }
+
+    public void addOrReplaceLineup(Lineup lineup){
+        if (lineup == null) return;
+        this.lineups.removeIf(l -> l.getFormationId() != null && l.getFormationId().equals(lineup.getFormationId()));
+        this.lineups.add(lineup);
     }
 
     public int getBudget() {
