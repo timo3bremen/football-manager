@@ -2,6 +2,8 @@ package com.example.manager.service;
 
 import com.example.manager.dto.BidRequest;
 import com.example.manager.dto.CreateAuctionRequest;
+import com.example.manager.dto.LeagueInfoDTO;
+import com.example.manager.dto.TeamDetailsDTO;
 import com.example.manager.model.Player;
 import com.example.manager.model.Team;
 import com.example.manager.model.TransferAuction;
@@ -48,6 +50,18 @@ public class ManagerService {
         return repositoryService.registerUser(username, password, t.getId());
     }
 
+    public String registerUserWithLeague(String username, String password, String teamName, Long leagueId) {
+        return repositoryService.registerUserWithLeague(username, password, teamName, leagueId);
+    }
+
+    public List<LeagueInfoDTO> getAvailableLeagues() {
+        return repositoryService.getAvailableLeagues();
+    }
+
+    public void initializeLigues() {
+        repositoryService.initializeLigues();
+    }
+
     public String loginUser(String username, String password){
         return repositoryService.authenticateUser(username, password);
     }
@@ -58,6 +72,18 @@ public class ManagerService {
 
     public Team getTeamById(long id){
         return repositoryService.getTeam(id);
+    }
+
+    public Team saveTeam(Team team){
+        return repositoryService.saveTeam(team);
+    }
+
+    public Team updateTeamName(Long teamId, String newName){
+        return repositoryService.updateTeamName(teamId, newName);
+    }
+
+    public TeamDetailsDTO getTeamDetails(Long teamId){
+        return repositoryService.getTeamDetails(teamId);
     }
 
     public void saveGameState(long teamId, String json) {

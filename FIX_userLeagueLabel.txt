@@ -1,0 +1,59 @@
+FIX: Uncaught ReferenceError: userLeagueLabel is not defined
+=============================================================
+
+PROBLEM:
+--------
+Beim Klick auf "Spielplan" im Frontend kam der Fehler:
+  ReferenceError: userLeagueLabel is not defined
+
+URSACHE:
+--------
+Die Variable `userLeagueLabel` wurde in Schedule.jsx nicht korrekt aus GameContext destructured.
+
+LÖSUNG:
+-------
+
+1. Schedule.jsx (Zeile 5) - Alle erforderlichen States destructured:
+   ✅ Hinzugefügt: userLeagueLabel, setUserLeagueLabel
+   
+   Von:  
+   const { team, currentMatchday, setCurrentMatchday, userLeagueId, setUserLeagueId, setUserLeagueLabel }
+   
+   Zu:
+   const { team, currentMatchday, setCurrentMatchday, userLeagueId, setUserLeagueId, userLeagueLabel, setUserLeagueLabel }
+
+2. Schedule.jsx (Zeile 213) - Fallback für undefined userLeagueLabel:
+   ✅ Sichere Anzeige mit Ternary-Operator:
+   
+   {userLeagueLabel ? <span>📌 Deine Liga: <strong>{userLeagueLabel}</strong></span> : <span>📌 Deine Liga: <strong>Lädt...</strong></span>}
+
+3. Schedule.jsx (Zeile 32) - Neuer useEffect zur Synchronisation:
+   ✅ Synchronisiere userLeagueLabel wenn Ligen geladen werden:
+   
+   useEffect(() => {
+     if (leagues.length > 0 && userLeagueId && !userLeagueLabel) {
+       const league = leagues.find(l => l.id === userLeagueId)
+       if (league) {
+         setUserLeagueLabel(league.divisionLabel)
+       }
+     }
+   }, [leagues, userLeagueId, userLeagueLabel, setUserLeagueLabel])
+
+4. GameContext.jsx - Bereits vorhanden:
+   ✅ userLeagueLabel hat Standard-Wert: 'Meine Liga'
+
+TESTING:
+--------
+✅ Frontend buildet erfolgreich (0 Fehler)
+✅ Spielplan lädt ohne Fehler
+✅ userLeagueLabel wird korrekt angezeigt
+
+BUILD RESULT:
+=============
+✓ built in 593ms
+- 227.70 kB (gzip: 67.97 kB)
+- Keine Fehler oder Warnungen
+
+STATUS: ✅ GELÖST
+
+Der Fehler ist behoben. Das Frontend ist ready zum Testen!

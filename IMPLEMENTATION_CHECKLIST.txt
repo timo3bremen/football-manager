@@ -1,0 +1,175 @@
+IMPLEMENTIERUNGS-CHECKLISTE: LIGA-SYSTEM
+==========================================
+
+✅ MODELLE
+----------
+[✓] League.java
+    - division: int (1, 2, oder 3)
+    - divisionLabel: String ("1. Liga", "2. Liga A", etc.)
+    - Getter/Setter
+
+[✓] User.java
+    - leagueId: Long
+    - Konstruktor mit leagueId
+    - Getter/Setter
+
+✅ DTOs
+--------
+[✓] RegistrationRequest.java
+    - username, password, teamName, leagueId
+
+[✓] LeagueInfoDTO.java
+    - id, name, division, divisionLabel, filledSlots, totalSlots
+
+✅ SERVICE-LAYER (RepositoryService.java)
+-------------------------------------------
+[✓] registerUserWithLeague(username, password, teamName, leagueId)
+    - Erstellt Team
+    - Findet zufälligen CPU-Team-Slot in Liga
+    - Ersetzt CPU-Team mit User-Team
+    - Erstellt User mit leagueId
+    - Löscht altes CPU-Team
+
+[✓] initializeLigues()
+    - Erstellt 7 Ligen:
+      * 1x "1. Liga" (division=1)
+      * 2x "2. Liga A/B" (division=2)
+      * 4x "3. Liga A/B/C/D" (division=3)
+    - Jede Liga erhält 12 CPU-Teams
+    - Jedes CPU-Team erhält:
+      * 18 Spieler mit Positionen
+      * 3 Lineups (4-4-2, 4-3-3, 3-5-2)
+      * 30 Stadionteile
+    - Erstellt Schedule für jede Liga
+    - Total: 84 CPU-Teams
+
+[✓] createLeagueWithCPUTeams(division, name, divisionLabel, numTeams)
+    - Hilfsmethode für initializeLigues
+
+[✓] initializeTeamPlayers(team)
+    - Erstellt 18 Spieler mit zufälligen Namen/Ländern
+
+[✓] initializeTeamStadium(team)
+    - Erstellt 30 Stadionteile
+
+[✓] initializeTeamLineups(team)
+    - Erstellt 3 Lineups mit Auto-Assign
+
+[✓] getAvailableLeagues()
+    - Gibt alle Ligen mit Metadaten zurück
+    - Sortiert nach Division, dann Name
+
+[✓] getLeagueStandingsByLeagueId(Long leagueId)
+    - Berechnet Tabelle für spezifische Liga
+    - Nur Teams aus dieser Liga einbeziehen
+    - Berechnet Punkte, Tore, etc.
+
+[✓] getLeagueStandings()
+    - Wrapper für erste Liga (Abwärtskompatibilität)
+
+✅ SERVICE-LAYER (ManagerService.java)
+---------------------------------------
+[✓] registerUserWithLeague(username, password, teamName, leagueId)
+    - Delegiert zu RepositoryService
+
+[✓] getAvailableLeagues()
+    - Delegiert zu RepositoryService
+
+[✓] initializeLigues()
+    - Delegiert zu RepositoryService
+
+✅ CONTROLLER-LAYER
+-------------------
+[✓] ManagerController.java
+    - AuthRequest erweitert um leagueId
+    - POST /api/auth/register-with-league
+    - GET /api/auth/leagues
+
+[✓] ScheduleController.java
+    - GET /api/v2/schedule/leagues
+    - GET /api/v2/schedule/standings/league/{leagueId}
+
+[✓] AdminController.java
+    - POST /api/admin/initialize-leagues
+
+✅ KONFIGURATION
+-----------------
+[✓] ApplicationStartupListener.java
+    - @EventListener(ApplicationReadyEvent.class)
+    - Ruft initializeLigues() beim Server-Start auf
+    - Fehlerbehandlung mit Logging
+
+✅ API-ENDPOINTS (Zusammenfassung)
+----------------------------------
+Authentication:
+  POST   /api/auth/register                    (alte Methode, ohne Liga)
+  POST   /api/auth/register-with-league        (NEW - mit Liga-Wahl)
+  GET    /api/auth/leagues                     (NEW - verfügbare Ligen)
+  POST   /api/auth/login                       (existierend)
+
+Spielplan:
+  GET    /api/v2/schedule/leagues              (NEW - alle Ligen abrufen)
+  GET    /api/v2/schedule/standings            (existierend, User-Liga)
+  GET    /api/v2/schedule/standings/league/{id} (NEW - spezifische Liga)
+  GET    /api/v2/schedule/matchdays            (existierend)
+  POST   /api/v2/schedule/simulate-match       (existierend)
+  POST   /api/v2/schedule/advance-matchday     (existierend)
+
+Admin:
+  DELETE /api/admin/clear-all                  (existierend)
+  POST   /api/admin/initialize-leagues         (NEW)
+
+✅ WORKFLOW
+-----------
+1. Server startet
+   → ApplicationStartupListener.onApplicationReady()
+   → RepositoryService.initializeLigues()
+   → 7 Ligen + 84 CPU-Teams erstellt
+
+2. User registriert sich
+   → GET /api/auth/leagues (zeigt Liga-Optionen)
+   → POST /api/auth/register-with-league
+   → Zufälliger CPU-Slot wird mit User-Team ersetzt
+
+3. User sieht Spielplan
+   → GET /api/v2/schedule/standings (eigene Liga)
+   → GET /api/v2/schedule/leagues (Liga-Auswahl)
+   → GET /api/v2/schedule/standings/league/{leagueId} (andere Liga)
+
+✅ KOMPILIERUNG
+----------------
+[✓] Keine Compile-Fehler
+[✓] Alle DTOs vorhanden
+[✓] Alle Import-Statements korrekt
+[✓] Alle Methoden-Signaturen konsistent
+
+✅ DATENBANK-ÄNDERUNGEN
+------------------------
+Neue Spalten:
+  - leagues.division (INT)
+  - leagues.division_label (VARCHAR)
+  - users.league_id (LONG, FK zu leagues.id)
+
+Migration nicht erforderlich (JPA-Managed):
+  - H2 erstellt Tabellen automatisch
+  - Spalten werden bei Bedarf hinzugefügt
+
+✅ DATEIEN ERSTELLT/GEÄNDERT
+-----------------------------
+Neue Dateien:
+  - RegistrationRequest.java
+  - LeagueInfoDTO.java
+  - ApplicationStartupListener.java
+  - LIGA_SYSTEM_README.md
+  - test_liga_api.sh
+
+Geänderte Dateien:
+  - League.java (+ division, divisionLabel)
+  - User.java (+ leagueId)
+  - RepositoryService.java (+ 6 neue Methoden)
+  - ManagerService.java (+ 3 neue Methoden)
+  - ManagerController.java (+ 2 neue Endpoints)
+  - ScheduleController.java (+ 2 neue Endpoints)
+  - AdminController.java (+ 1 Endpoint, - 1 alte Methode)
+
+FERTIG! ✓

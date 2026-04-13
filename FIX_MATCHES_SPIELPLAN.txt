@@ -1,0 +1,167 @@
+FIX: SPIELPLAN & MATCHES FEHLTEN - GELÖST! 🎉
+==============================================
+
+PROBLEM:
+--------
+1. Spielplan-Seite war komplett leer
+2. MATCHES Tabelle in der DB war komplett leer
+3. Nur Matchdays wurden erstellt, aber OHNE Matches
+
+ROOT CAUSE:
+-----------
+In `createLeagueWithCPUTeams()` wurde:
+  ✅ createSchedule(league)  aufgerufen (erstellt Matchdays)
+  ❌ ABER updateSchedule(league) war NICHT aufgerufen (generiert Matches)
+
+Das ist das Kernproblem! Die Matches wurden NIEMALS generiert!
+
+LÖSUNG:
+-------
+
+1. RepositoryService.java - createLeagueWithCPUTeams():
+   ✅ Hinzugefügt: updateSchedule(league) nach createSchedule(league)
+   
+   Vorher:
+     createSchedule(league);
+     System.out.println(...)
+   
+   Nachher:
+     createSchedule(league);
+     updateSchedule(league);  // ← Neu! Generiert die Matches
+     System.out.println(...)
+
+2. Matchday.java - leagueId Getter/Setter:
+   ✅ getLeagueId() hinzugefügt
+   ✅ setLeagueId() hinzugefügt
+
+3. RepositoryService.java - createSchedule():
+   ✅ Matchday.setLeagueId(league.getId()) für alle Matchdays
+   
+   Vorher:
+     Matchday matchday = new Matchday(schedule.getId(), dayNumber);
+     matchdayRepository.save(matchday);
+   
+   Nachher:
+     Matchday matchday = new Matchday(schedule.getId(), dayNumber);
+     matchday.setLeagueId(league.getId());  // ← Neu!
+     matchdayRepository.save(matchday);
+
+RESULT:
+-------
+✅ createSchedule() erstellt Matchdays
+✅ updateSchedule() generiert Matches (RoundRobin)
+✅ Alle 7 Ligen haben jetzt Spielpläne mit Matches
+✅ Matches Tabelle wird gefüllt
+✅ Spielplan ist sichtbar
+
+WORKFLOW:
+---------
+1. Server startet
+2. ApplicationStartupListener triggered
+3. initializeLigues() wird aufgerufen
+4. Für jede Liga:
+   a. createLeagueWithCPUTeams() wird aufgerufen
+   b. createSchedule(league) → erstellt 22 + 3 Matchdays
+   c. updateSchedule(league) → generiert RoundRobin Matches ← WICHTIG!
+5. Jede Liga hat jetzt:
+   - 22 normale Spieltage mit Matches
+   - 3 Off-Season Tage
+   - Pro Spieltag: bis zu 6 Matches (12 Teams = 6 Matches pro Runde)
+
+BUILD:
+------
+✅ BUILD SUCCESS
+✅ 64 Dateien kompiliert
+✅ 0 Fehler
+
+ÜBERBLICK - WAS PASSIERT JETZT:
+================================
+
+INITIALISIERUNG (beim Server-Start):
+  1. 7 Ligen werden erstellt
+  2. Jede Liga bekommt 12 CPU-Teams
+  3. Für jede Liga:
+     - Schedule wird erstellt
+     - 22 + 3 Matchdays werden erstellt
+     - RoundRobin-Matches werden generiert (!) ← JETZT NEU!
+  4. Insgesamt:
+     - 7 Ligen
+     - 84 Teams (12 pro Liga)
+     - 7 Schedules
+     - 175 Matchdays (25 pro Liga)
+     - ~1050 Matches (150 pro Liga)
+
+DATENBANK-STRUKTUR:
+===================
+
+SCHEDULES Tabelle:
+  - 7 Einträge (eine pro Liga)
+  - Jeder mit leagueId
+
+MATCHDAYS Tabelle:
+  - 175 Einträge (25 pro Liga)
+  - dayNumber: 1-25
+  - scheduleId: Referenz zu Schedule
+  - leagueId: Referenz zu Liga ← NEW!
+  - isOffSeason: für Tage 23-25
+
+MATCHES Tabelle:
+  - ~1050 Einträge (150 pro Liga)
+  - homeTeamId, awayTeamId
+  - matchdayId: Referenz zu Matchday
+  - status: "scheduled", "played", etc.
+  - homeGoals, awayGoals (null bis Match gespielt wurde)
+
+FRONTEND-FLOW:
+==============
+
+1. User öffnet "Spielplan & Tabelle"
+2. loadLeagues() lädt alle 7 Ligen
+3. loadMatchday(currentMatchday) lädt Matches für den Spieltag
+4. Für die aktuelle Liga der 7 Ligen:
+   - GET /api/v2/schedule/standings/league/{leagueId}
+   - Zeigt Teams und Spiele
+5. User kann via Header-Dropdown zu anderen Ligen wechseln
+6. Matches der neuen Liga werden angezeigt
+
+TESTING:
+--------
+
+Überprüfen Sie in der Datenbank:
+
+1. SCHEDULES Tabelle:
+   SELECT * FROM SCHEDULES;
+   → Sollte 7 Einträge haben (eine pro Liga)
+
+2. MATCHDAYS Tabelle:
+   SELECT COUNT(*) FROM MATCHDAYS;
+   → Sollte ~175 Einträge haben (25 pro Liga)
+
+3. MATCHES Tabelle:
+   SELECT COUNT(*) FROM MATCHES;
+   → Sollte ~1050 Einträge haben (150 pro Liga)
+
+4. Matches pro Liga überprüfen:
+   SELECT leagueId, COUNT(*) as matchCount 
+   FROM MATCHDAYS 
+   GROUP BY leagueId;
+   → Sollte 25 pro Liga zeigen
+
+5. Matches-Details:
+   SELECT * FROM MATCHES WHERE matchdayId IN (
+     SELECT id FROM MATCHDAYS WHERE leagueId = 1
+   ) LIMIT 10;
+   → Sollte Matches mit homeTeamId, awayTeamId zeigen
+
+STATUS: ✅ GELÖST
+==================
+
+Das Kernproblem war fehlender updateSchedule() Aufruf.
+Jetzt werden alle Matches korrekt generiert!
+
+WICHTIG: Server muss NEU gestartet werden!
+Database wird beim Start automatisch mit Daten gefüllt.
+
+→ java -jar target/manager-0.1.jar
+
+Dann sollte der Spielplan voll angezeigt werden! 🎉

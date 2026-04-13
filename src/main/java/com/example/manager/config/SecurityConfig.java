@@ -41,7 +41,7 @@ public class SecurityConfig {
         http.authorizeHttpRequests(auth -> auth
                 // Allow all API endpoints, H2 console, and common routes without authentication
                 .requestMatchers("/h2-console/**", "/", "/index.html", "/api/**", "/admin/**", "/frontend/**", "/login", "/logout").permitAll()
-                .anyRequest().authenticated()
+                .anyRequest().permitAll() // Allow all other requests for development
         );
 
         // Disable form login for API - let API handle authentication

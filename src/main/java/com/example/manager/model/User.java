@@ -18,6 +18,9 @@ public class User {
 
     @Column(name = "teamId")
     private Long teamId;
+    
+    @Column(name = "leagueId")
+    private Long leagueId; // Die Liga, der der User angehört
 
     public User() {
     }
@@ -26,6 +29,13 @@ public class User {
         this.username = username;
         this.passwordHash = passwordHash;
         this.teamId = teamId;
+    }
+    
+    public User(String username, String passwordHash, Long teamId, Long leagueId) {
+        this.username = username;
+        this.passwordHash = passwordHash;
+        this.teamId = teamId;
+        this.leagueId = leagueId;
     }
 
     public String getUsername() {
@@ -50,5 +60,13 @@ public class User {
 
     public void setTeamId(Long teamId) {
         this.teamId = teamId;
+    }
+    
+    public Long getLeagueId() {
+        return leagueId;
+    }
+
+    public void setLeagueId(Long leagueId) {
+        this.leagueId = leagueId;
     }
 }

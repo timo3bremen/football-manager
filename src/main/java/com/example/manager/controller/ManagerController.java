@@ -2,6 +2,8 @@ package com.example.manager.controller;
 
 import com.example.manager.dto.BidRequest;
 import com.example.manager.dto.CreateAuctionRequest;
+import com.example.manager.dto.LeagueInfoDTO;
+import com.example.manager.dto.TeamDetailsDTO;
 import com.example.manager.model.Player;
 import com.example.manager.model.Team;
 import com.example.manager.model.TransferAuction;
@@ -104,8 +106,31 @@ public class ManagerController {
         return ResponseEntity.ok(t);
     }
 
+    // get team details including strength
+    @GetMapping("/teams/{id}/details")
+    public ResponseEntity<?> getTeamDetails(@PathVariable("id") long id){
+        TeamDetailsDTO details = service.getTeamDetails(id);
+        if (details == null) return ResponseEntity.notFound().build();
+        return ResponseEntity.ok(details);
+    }
+
+    // update team name
+    @PutMapping("/teams/{id}/name")
+    public ResponseEntity<?> updateTeamName(@PathVariable("id") long id, @RequestBody java.util.Map<String, String> req){
+        try {
+            String newName = req.get("name");
+            if (newName == null || newName.trim().isEmpty()) {
+                return ResponseEntity.badRequest().body("name is required");
+            }
+            Team t = service.updateTeamName(id, newName);
+            return ResponseEntity.ok(t);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
     // auth
-    public static class AuthRequest { public String username; public String password; public String teamName; }
+    public static class AuthRequest { public String username; public String password; public String teamName; public Long leagueId; }
 
     @PostMapping("/auth/register")
     public ResponseEntity<?> register(@RequestBody AuthRequest req){
@@ -116,6 +141,31 @@ public class ManagerController {
             return ResponseEntity.ok(java.util.Map.of("token", token, "teamId", tid));
         }catch(IllegalArgumentException e){
             return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    @PostMapping("/auth/register-with-league")
+    public ResponseEntity<?> registerWithLeague(@RequestBody AuthRequest req){
+        try{
+            if (req.leagueId == null) {
+                return ResponseEntity.badRequest().body("leagueId is required");
+            }
+            String token = service.registerUserWithLeague(req.username, req.password, 
+                    req.teamName == null ? "Mein Team" : req.teamName, req.leagueId);
+            Long tid = service.getTeamIdForToken(token);
+            return ResponseEntity.ok(java.util.Map.of("token", token, "teamId", tid));
+        }catch(IllegalArgumentException e){
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    @GetMapping("/auth/leagues")
+    public ResponseEntity<?> getAvailableLeagues(){
+        try{
+            List<LeagueInfoDTO> leagues = service.getAvailableLeagues();
+            return ResponseEntity.ok(leagues);
+        }catch(Exception e){
+            return ResponseEntity.status(500).body(e.getMessage());
         }
     }
 
