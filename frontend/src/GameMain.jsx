@@ -5,11 +5,12 @@ import Club from './Club'
 import Schedule from './Schedule'
 import Options from './Options'
 import TransferMarket from './TransferMarket'
+import LiveMatchSimulation from './LiveMatchSimulation'
 import { useGame } from './GameContext'
 
 export default function GameMain(){
   const [tab, setTab] = useState('team')
-  const { team } = useGame()
+  const { team, token } = useGame()
 
   if (!team) {
     return (
@@ -39,23 +40,25 @@ export default function GameMain(){
       </div>
 
       <div className="card">
-        <div className="menu">
-          <button className={tab==='team'? 'active':''} onClick={()=>setTab('team')}>Team</button>
-          <button className={tab==='infrastructure'? 'active':''} onClick={()=>setTab('infrastructure')}>Infrastruktur</button>
-          <button className={tab==='club'? 'active':''} onClick={()=>setTab('club')}>Verein</button>
-          <button className={tab==='schedule'? 'active':''} onClick={()=>setTab('schedule')}>Spielplan</button>
-          <button className={tab==='transfer-market'? 'active':''} onClick={()=>setTab('transfer-market')}>Transfermarkt</button>
-          <button className={tab==='options'? 'active':''} onClick={()=>setTab('options')}>Optionen</button>
-        </div>
+       <div className="menu">
+           <button className={tab==='team'? 'active':''} onClick={()=>setTab('team')}>Team</button>
+           <button className={tab==='infrastructure'? 'active':''} onClick={()=>setTab('infrastructure')}>Infrastruktur</button>
+           <button className={tab==='club'? 'active':''} onClick={()=>setTab('club')}>Verein</button>
+           <button className={tab==='schedule'? 'active':''} onClick={()=>setTab('schedule')}>Spielplan</button>
+           <button className={tab==='live-simulation'? 'active':''} onClick={()=>setTab('live-simulation')}>🔴 Live</button>
+           <button className={tab==='transfer-market'? 'active':''} onClick={()=>setTab('transfer-market')}>Transfermarkt</button>
+           <button className={tab==='options'? 'active':''} onClick={()=>setTab('options')}>Optionen</button>
+         </div>
 
-        <div className="panel">
-          {tab === 'team' && <TeamPage />}
-          {tab === 'infrastructure' && <Infrastructure />}
-          {tab === 'club' && <Club />}
-          {tab === 'schedule' && <Schedule />}
-          {tab === 'transfer-market' && <TransferMarket />}
-          {tab === 'options' && <Options />}
-        </div>
+         <div className="panel">
+           {tab === 'team' && <TeamPage />}
+           {tab === 'infrastructure' && <Infrastructure />}
+           {tab === 'club' && <Club />}
+           {tab === 'schedule' && <Schedule />}
+           {tab === 'live-simulation' && <LiveMatchSimulation token={token} teamId={team?.id} />}
+           {tab === 'transfer-market' && <TransferMarket />}
+           {tab === 'options' && <Options />}
+         </div>
       </div>
     </div>
   )

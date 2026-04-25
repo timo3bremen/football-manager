@@ -169,6 +169,26 @@ public class ManagerController {
         }
     }
 
+    @GetMapping("/auth/countries")
+    public ResponseEntity<?> getAvailableCountries(){
+        try{
+            List<String> countries = service.getAvailableCountries();
+            return ResponseEntity.ok(countries);
+        }catch(Exception e){
+            return ResponseEntity.status(500).body(e.getMessage());
+        }
+    }
+
+    @GetMapping("/auth/leagues/{country}")
+    public ResponseEntity<?> getLeaguesByCountry(@PathVariable("country") String country){
+        try{
+            List<LeagueInfoDTO> leagues = service.getLeaguesByCountry(country);
+            return ResponseEntity.ok(leagues);
+        }catch(Exception e){
+            return ResponseEntity.status(500).body(e.getMessage());
+        }
+    }
+
     @PostMapping("/auth/login")
     public ResponseEntity<?> login(@RequestBody AuthRequest req){
         try{

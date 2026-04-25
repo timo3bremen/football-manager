@@ -162,6 +162,26 @@ public class ScheduleController {
 	}
 
 	/**
+	 * Gibt alle verfügbaren Länder zurück.
+	 * GET /api/v2/schedule/countries
+	 */
+	@GetMapping("/countries")
+	public ResponseEntity<List<String>> getAvailableCountries() {
+		List<String> countries = repositoryService.getAvailableCountries();
+		return ResponseEntity.ok(countries);
+	}
+
+	/**
+	 * Gibt alle Ligen eines bestimmten Landes zurück.
+	 * GET /api/v2/schedule/leagues/country/{country}
+	 */
+	@GetMapping("/leagues/country/{country}")
+	public ResponseEntity<List<LeagueInfoDTO>> getLeaguesByCountry(@PathVariable String country) {
+		List<LeagueInfoDTO> leagues = repositoryService.getLeaguesByCountry(country);
+		return ResponseEntity.ok(leagues);
+	}
+
+	/**
 	 * Gibt die Tabelle einer spezifischen Liga zurück.
 	 * GET /api/v2/schedule/standings/league/{leagueId}
 	 */

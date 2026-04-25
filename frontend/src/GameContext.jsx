@@ -2,12 +2,16 @@ import React, { createContext, useContext, useState, useEffect } from 'react'
 
 const GameContext = createContext(null)
 
+// API URL configuration - can be changed for network access
+const API_BASE = 'http://192.168.178.21:8080'
+
 export function useGame(){
   return useContext(GameContext)
 }
 
 export function GameProvider({children}){
   const [team, setTeam] = useState(null)
+  const [token, setToken] = useState(null)
   const [roster, setRoster] = useState([])
   // lineup is a map: slotId -> playerId | null
   const [lineup, setLineup] = useState({})
@@ -92,10 +96,33 @@ export function GameProvider({children}){
     }
   }catch(e){}
 
-  function addTransaction({amount, type='income', desc=''}){
-    const t = { id: `t-${Date.now()}`, amount, type, desc, date: Date.now() }
+  function addTransaction({amount, type='income', desc='', category='other'}){
+    const t = { id: `t-${Date.now()}`, amount, type, desc, category, date: Date.now() }
     setTransactions(prev => [t, ...prev])
     setBalance(b => b + amount)
+    
+    // Speichere zur DB
+    if (team && team.id) {
+      const authRaw = localStorage.getItem('fm_auth')
+      const token = authRaw ? JSON.parse(authRaw).token : null
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(token && { 'X-Auth-Token': token })
+      }
+      
+      fetch(`${API_BASE}/api/v2/transactions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          teamId: team.id,
+          amount,
+          type,
+          description: desc,
+          category
+        })
+      }).catch(err => console.error('Error saving transaction:', err))
+    }
+    
     return t
   }
 
@@ -131,28 +158,31 @@ export function GameProvider({children}){
     return newTeam
   }
 
-  // restore team from localStorage if present
-  useEffect(()=>{
-    (async ()=>{
-      try{
-        // if user is authenticated, prefer server-side team load
-        const authRaw = localStorage.getItem('fm_auth')
-        if (authRaw){
-          try{
-            const auth = JSON.parse(authRaw)
-            if (auth && auth.teamId){
-              const headers = {}
-              if (auth.token) headers['X-Auth-Token'] = auth.token
-              const res = await fetch(`http://localhost:8080/api/teams/${auth.teamId}`, { headers })
-              if (res.ok){
-                const teamObj = await res.json()
-                setTeam(teamObj)
-                try{ localStorage.setItem('fm_currentTeam', JSON.stringify(teamObj)) }catch(e){}
-                return
-              }
-            }
-          }catch(e){ /* ignore */ }
-        }
+   // restore team from localStorage if present
+   useEffect(()=>{
+     (async ()=>{
+       try{
+         // if user is authenticated, prefer server-side team load
+         const authRaw = localStorage.getItem('fm_auth')
+         if (authRaw){
+           try{
+             const auth = JSON.parse(authRaw)
+             if (auth && auth.token) {
+               setToken(auth.token)
+             }
+              if (auth && auth.teamId){
+                const headers = {}
+                if (auth.token) headers['X-Auth-Token'] = auth.token
+                const res = await fetch(`${API_BASE}/api/teams/${auth.teamId}`, { headers })
+               if (res.ok){
+                 const teamObj = await res.json()
+                 setTeam(teamObj)
+                 try{ localStorage.setItem('fm_currentTeam', JSON.stringify(teamObj)) }catch(e){}
+                 return
+               }
+             }
+           }catch(e){ /* ignore */ }
+         }
         // fallback: use fm_currentTeam if present
         const raw = localStorage.getItem('fm_currentTeam')
         if (!raw) return
@@ -162,7 +192,43 @@ export function GameProvider({children}){
     })()
   }, [])
 
-  // if no team is set, try to restore a local unsaved state (fm_state_local)
+    // wenn Team sich ändert, lade die aktive Formation
+    useEffect(()=>{
+      if (!team || !team.id) return
+      
+      // Wenn das Team eine activeFormation hat, nutze diese
+      if (team.activeFormation) {
+        setFormation(team.activeFormation)
+      } else {
+        // Ansonsten nutze Standard 4-4-2
+        setFormation('4-4-2')
+      }
+    }, [team && team.id])
+
+    // Load transactions from DB when team changes
+    useEffect(()=>{
+      if (!team || !team.id) return
+      
+      (async ()=>{
+        try {
+          const authRaw = localStorage.getItem('fm_auth')
+          const token = authRaw ? JSON.parse(authRaw).token : null
+          const headers = {}
+          if (token) headers['X-Auth-Token'] = token
+          
+          const res = await fetch(`${API_BASE}/api/v2/transactions/team/${team.id}`, { headers })
+          if (res.ok) {
+            const transactions = await res.json()
+            setTransactions(transactions)
+            log('Loaded transactions from DB:', transactions.length)
+          }
+        } catch (err) {
+          console.error('Error loading transactions:', err)
+        }
+      })()
+    }, [team && team.id])
+
+    // if no team is set, try to restore a local unsaved state (fm_state_local)
   useEffect(()=>{
     try{
       const raw = localStorage.getItem(localStateKey(null))
@@ -201,11 +267,11 @@ export function GameProvider({children}){
           const headers = { 'Content-Type':'application/json' }
           if (token) headers['X-Auth-Token'] = token
           
-          const lineupResponse = await fetch(`http://localhost:8080/api/lineups/${teamId}/save`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(lineupPayload)
-          });
+           const lineupResponse = await fetch(`${API_BASE}/api/lineups/${teamId}/save`, {
+             method: 'POST',
+             headers,
+             body: JSON.stringify(lineupPayload)
+           });
           
           if (lineupResponse.ok) {
             const result = await lineupResponse.json();
@@ -236,9 +302,9 @@ export function GameProvider({children}){
       if (token) headers['X-Auth-Token'] = token
       
       // Lade die Lineup von der DB - das ist die Source of Truth
-      // WICHTIG: formationId ist erforderlich!
-      try {
-        const lineupRes = await fetch(`http://localhost:8080/api/lineups/${teamId}/${formationId}/map`, { headers })
+       // WICHTIG: formationId ist erforderlich!
+       try {
+         const lineupRes = await fetch(`${API_BASE}/api/lineups/${teamId}/${formationId}/map`, { headers })
         if (lineupRes.ok) {
           const lineupData = await lineupRes.json()
           log('loadLineupFromDB: loaded lineup from DB', teamId, formationId, lineupData)
@@ -268,18 +334,71 @@ export function GameProvider({children}){
   }, [team && team.id, lineup, stadiumParts, sponsors, balance, transactions, jersey, currentFormation, stadiumEntryPrice, fanFriendship, roster])
 
    // when formation changes, reload lineup from DB
-   useEffect(()=>{
-     if (!team || !team.id || !currentFormation) return
-     (async ()=>{
-       const lineupData = await loadLineupFromDB(team.id, currentFormation)
-       if (lineupData) {
-         log('Formation changed: reloading lineup from DB', team.id, currentFormation, lineupData)
-         setLineup(lineupData)
-       } else {
-         log('No lineup in DB for team', team.id, 'formation', currentFormation)
-       }
-     })()
-   }, [team && team.id, currentFormation])
+    useEffect(()=>{
+      if (!team || !team.id || !currentFormation) return
+      (async ()=>{
+        const lineupData = await loadLineupFromDB(team.id, currentFormation)
+        if (lineupData) {
+          log('Formation changed: reloading lineup from DB', team.id, currentFormation, lineupData)
+          setLineup(lineupData)
+        } else {
+          log('No lineup in DB for team', team.id, 'formation', currentFormation)
+        }
+      })()
+    }, [team && team.id, currentFormation])
+
+    // Handle teamUpdated event (triggered after transfer market operations)
+    useEffect(()=>{
+      const handleTeamUpdate = async () => {
+        if (!team || !team.id) return
+        log('teamUpdated event received - reloading team data')
+        
+        try {
+          // Reload players from DB
+          const authRaw = localStorage.getItem('fm_auth')
+          const token = authRaw ? JSON.parse(authRaw).token : null
+          const headers = {}
+          if (token) headers['X-Auth-Token'] = token
+          
+            const playersRes = await fetch(`${API_BASE}/api/v2/players/team/${team.id}`, { headers })
+          if (playersRes.ok) {
+            const teamPlayers = await playersRes.json()
+            log('Reloaded ' + teamPlayers.length + ' players from DB')
+            setRoster(teamPlayers)
+          }
+          
+          // Reload budget from server
+            const teamRes = await fetch(`${API_BASE}/api/teams/${team.id}`, { headers })
+          if (teamRes.ok) {
+            const teamData = await teamRes.json()
+            if (teamData && typeof teamData.budget === 'number') {
+              log('Reloaded budget from server:', teamData.budget)
+              setBalance(teamData.budget)
+            }
+          }
+          
+          // Reload lineup from DB
+          const lineupData = await loadLineupFromDB(team.id, currentFormation)
+          if (lineupData) {
+            log('Reloaded lineup from DB', team.id, currentFormation, lineupData)
+            setLineup(lineupData)
+          }
+          
+          // Reload transactions from DB
+          const transRes = await fetch(`${API_BASE}/api/v2/transactions/team/${team.id}`, { headers })
+          if (transRes.ok) {
+            const transactions = await transRes.json()
+            log('Reloaded transactions from DB:', transactions.length)
+            setTransactions(transactions)
+          }
+        } catch (e) {
+          log('Error reloading team data:', e)
+        }
+      }
+      
+      window.addEventListener('teamUpdated', handleTeamUpdate)
+      return () => window.removeEventListener('teamUpdated', handleTeamUpdate)
+    }, [team && team.id, currentFormation])
 
     // ...existing code...
     useEffect(()=>{
@@ -316,46 +435,66 @@ export function GameProvider({children}){
           // Clear roster when no local state is found
           setRoster([])
         }
-      }catch(e){ log('error applying local cached state', e) }
+       }catch(e){ log('error applying local cached state', e) }
 
-      // then fetch lineup from DB and apply it
-      (async ()=>{
-        const lineupData = await loadLineupFromDB(team.id, currentFormation)
-        if (lineupData) {
-          log('Setting lineup from DB', team.id, currentFormation, lineupData)
-          setLineup(lineupData)
-        } else {
-          log('No lineup in DB for team', team.id, 'formation', currentFormation)
-        }
-        
-        // Always load players from DB for the current team
-        try {
-          log('Loading players from DB for team ' + team.id)
-          const authRaw = localStorage.getItem('fm_auth')
-          const token = authRaw ? JSON.parse(authRaw).token : null
-          const headers = {}
-          if (token) headers['X-Auth-Token'] = token
-          
-          const playersRes = await fetch(`http://localhost:8080/api/v2/players/team/${team.id}`, { headers })
-          if (playersRes.ok) {
-            const teamPlayers = await playersRes.json()
-            if (teamPlayers.length > 0) {
-              log('Loaded ' + teamPlayers.length + ' players from DB')
-              setRoster(teamPlayers)
-            } else {
-              log('No players found for team ' + team.id)
-              setRoster([])
-            }
-          } else {
-            log('Failed to load players: ' + playersRes.status)
-            setRoster([])
-          }
-        } catch (e) {
-          log('Failed to load players from DB:', e)
-          setRoster([])
-        }
-      })()
-    }, [team && team.id])
+       // then fetch lineup from DB and apply it
+       (async ()=>{
+         const lineupData = await loadLineupFromDB(team.id, currentFormation)
+         if (lineupData) {
+           log('Setting lineup from DB', team.id, currentFormation, lineupData)
+           setLineup(lineupData)
+         } else {
+           log('No lineup in DB for team', team.id, 'formation', currentFormation)
+         }
+         
+         // Always load players from DB for the current team
+         try {
+           log('Loading players from DB for team ' + team.id)
+           const authRaw = localStorage.getItem('fm_auth')
+           const token = authRaw ? JSON.parse(authRaw).token : null
+           const headers = {}
+           if (token) headers['X-Auth-Token'] = token
+           
+           const playersRes = await fetch(`${API_BASE}/api/v2/players/team/${team.id}`, { headers })
+           if (playersRes.ok) {
+             const teamPlayers = await playersRes.json()
+             if (teamPlayers.length > 0) {
+               log('Loaded ' + teamPlayers.length + ' players from DB')
+               setRoster(teamPlayers)
+             } else {
+               log('No players found for team ' + team.id)
+               setRoster([])
+             }
+           } else {
+             log('Failed to load players: ' + playersRes.status)
+             setRoster([])
+           }
+         } catch (e) {
+           log('Failed to load players from DB:', e)
+           setRoster([])
+         }
+         
+         // Load current budget from server (override local value)
+         try {
+           log('Loading budget from server for team ' + team.id)
+           const authRaw = localStorage.getItem('fm_auth')
+           const token = authRaw ? JSON.parse(authRaw).token : null
+           const headers = {}
+           if (token) headers['X-Auth-Token'] = token
+           
+           const teamRes = await fetch(`${API_BASE}/api/teams/${team.id}`, { headers })
+           if (teamRes.ok) {
+             const teamData = await teamRes.json()
+             if (teamData && typeof teamData.budget === 'number') {
+               log('Loaded budget from server:', teamData.budget)
+               setBalance(teamData.budget)
+             }
+           }
+         } catch (e) {
+           log('Failed to load budget from server:', e)
+         }
+       })()
+     }, [team && team.id])
 
   // formation helper
   const formations = {
@@ -372,9 +511,21 @@ export function GameProvider({children}){
     const rows = buildFormationRows(name)
     setFormationRows(rows)
     setCurrentFormation(name)
-    // Nicht hier die Lineup löschen! Sie wird vom Backend geladen
-    // Die Slots werden von loadLineupFromDB geladen
-    // Und die Lineup wird im useEffect neu geladen wenn currentFormation sich ändert
+    
+    // Speichere die aktive Formation auf dem Backend - DISABLED da Endpoint nicht existiert
+    // if (team && team.id) {
+    //   const API_BASE = (typeof window !== 'undefined' && window.__API_BASE__) || import.meta.env.VITE_API_URL || 'http://localhost:8080'
+    //   const authRaw = localStorage.getItem('fm_auth')
+    //   const token = authRaw ? JSON.parse(authRaw).token : null
+    //   const headers = { 'Content-Type': 'application/json' }
+    //   if (token) headers['X-Auth-Token'] = token
+    //   
+    //   fetch(`${API_BASE}/api/teams/${team.id}`, {
+    //     method: 'PUT',
+    //     headers,
+    //     body: JSON.stringify({ ...team, activeFormation: name })
+    //   }).catch(e => console.error('Fehler beim Speichern der Formation:', e))
+    // }
   }
 
   function assignPlayerToSlot(slotId, playerId){
@@ -546,47 +697,43 @@ export function GameProvider({children}){
   }
 
   function getStadiumSummary(){
-    const parts = stadiumParts || []
-    const builtStanding = parts.filter(p => p && p.built && p.type === 'standing').length
-    const builtSeated = parts.filter(p => p && p.built && p.type === 'seated').length
-    const builtVip = parts.filter(p => p && p.built && p.type === 'vip').length
-    const standingSeats = stadiumBaseCapacity + builtStanding * 1000
-    const seatedSeats = builtSeated * 1000
-    const vipSeats = builtVip * 1000
-    const added = (builtStanding + builtSeated + builtVip) * 1000
+    // Stadium size is now calculated from StadiumBuild in backend
+    // Base: 1000, plus any completed builds
+    const total = stadiumBaseCapacity || 1000
+    
     return {
-      base: stadiumBaseCapacity,
-      added,
-      total: standingSeats + seatedSeats + vipSeats,
-      seats: { standing: standingSeats, seated: seatedSeats, vip: vipSeats },
-      parts: { standing: builtStanding, seated: builtSeated, vip: builtVip },
+      base: stadiumBaseCapacity || 1000,
+      added: 0, // Will be updated when builds complete
+      total: total,
+      seats: { standing: total, seated: 0, vip: 0 },
+      parts: { standing: Math.ceil(total / 1000), seated: 0, vip: 0 },
       entryPrice: stadiumEntryPrice,
       fanFriendship
     }
   }
 
-  const value = {
-    team, roster, lineup, formationRows, currentFormation, stadiumLevel, stadiumParts, stadiumBaseCapacity, sponsors, jersey,
-    createTeam, setFormation, assignPlayerToSlot, swapSlots, removePlayerFromSlot, upgradeStadium, setSponsors, setJersey,
-    setStadiumPart, removeStadiumPart, getStadiumCapacity, getStadiumSummary,
-    // ...existing code...
-    // offers API
-    generateOffersForPart, acceptOffer, rejectOffer, negotiateOffer,
-    // pending type and freshness
-    setPendingType, ensureOffersFresh,
-    // stadium economics
-    stadiumEntryPrice, setStadiumEntryPrice, fanFriendship, setFanFriendship,
-    // finances
-    balance, transactions, addTransaction, addSponsorObject,
-    // league and matchday
-    currentMatchday, setCurrentMatchday, season,
-    // NEW: User-Liga
-    userLeagueId, setUserLeagueId, userLeagueLabel, setUserLeagueLabel,
-    // allow setting team from auth flow
-    setTeam,
-    // logging helpers
-    getLogs, exportLogs, clearLogs
-  }
+   const value = {
+     team, token, roster, lineup, formationRows, currentFormation, stadiumLevel, stadiumParts, stadiumBaseCapacity, sponsors, jersey,
+     createTeam, setFormation, assignPlayerToSlot, swapSlots, removePlayerFromSlot, upgradeStadium, setSponsors, setJersey,
+     setStadiumPart, removeStadiumPart, getStadiumCapacity, getStadiumSummary,
+     // ...existing code...
+     // offers API
+     generateOffersForPart, acceptOffer, rejectOffer, negotiateOffer,
+     // pending type and freshness
+     setPendingType, ensureOffersFresh,
+     // stadium economics
+     stadiumEntryPrice, setStadiumEntryPrice, fanFriendship, setFanFriendship,
+     // finances
+     balance, transactions, addTransaction, addSponsorObject,
+     // league and matchday
+     currentMatchday, setCurrentMatchday, season,
+     // NEW: User-Liga
+     userLeagueId, setUserLeagueId, userLeagueLabel, setUserLeagueLabel,
+     // allow setting team from auth flow
+     setTeam,
+     // logging helpers
+     getLogs, exportLogs, clearLogs
+   }
 
   return <GameContext.Provider value={value}>{children}</GameContext.Provider>
 }

@@ -1,23 +1,29 @@
 import React, { useState, useEffect } from 'react'
 import { useGame } from './GameContext'
+import CupSection from './CupSection'
 
 export default function Schedule(){
   const { team, currentMatchday, setCurrentMatchday, userLeagueId, setUserLeagueId, userLeagueLabel, setUserLeagueLabel } = useGame()
-  const [tab, setTab] = useState('league') // 'league', 'table', 'statistics'
-  const [displayedMatchday, setDisplayedMatchday] = useState(currentMatchday)
-  const [matchday, setMatchday] = useState(null)
-  const [standings, setStandings] = useState([])
-  const [statistics, setStatistics] = useState([])
-  const [loading, setLoading] = useState(false)
-  const [selectedTeamDetails, setSelectedTeamDetails] = useState(null)
-  const [showTeamModal, setShowTeamModal] = useState(false)
-  const [simulatingMatchId, setSimulatingMatchId] = useState(null)
-  const [lastSimulatedMatchId, setLastSimulatedMatchId] = useState(null)
-  const [matchReport, setMatchReport] = useState(null)
-  const [showMatchReport, setShowMatchReport] = useState(false)
-  // NEW: Liga-Wechsel
-  const [leagues, setLeagues] = useState([])
-  const [selectedLeague, setSelectedLeague] = useState(userLeagueId)
+   const [tab, setTab] = useState('league') // 'league', 'table', 'statistics'
+   const [displayedMatchday, setDisplayedMatchday] = useState(currentMatchday)
+   const [matchday, setMatchday] = useState(null)
+   const [standings, setStandings] = useState([])
+   const [statistics, setStatistics] = useState([])
+   const [loading, setLoading] = useState(false)
+   const [selectedTeamDetails, setSelectedTeamDetails] = useState(null)
+   const [showTeamModal, setShowTeamModal] = useState(false)
+   const [simulatingMatchId, setSimulatingMatchId] = useState(null)
+   const [lastSimulatedMatchId, setLastSimulatedMatchId] = useState(null)
+   const [matchReport, setMatchReport] = useState(null)
+   const [showMatchReport, setShowMatchReport] = useState(false)
+   // NEW: Liga-Wechsel mit Land-Filter
+   const [countries, setCountries] = useState([])
+   const [selectedCountry, setSelectedCountry] = useState(null)
+   const [allLeagues, setAllLeagues] = useState([]) // ALLE Ligen (nicht gefiltert)
+   const [leagues, setLeagues] = useState([]) // Gefilterte Ligen für das Land
+   const [selectedLeague, setSelectedLeague] = useState(userLeagueId)
+   const [countriesLoaded, setCountriesLoaded] = useState(false)
+   const [initialLoadComplete, setInitialLoadComplete] = useState(false)
 
   const API_BASE = (typeof window !== 'undefined' && window.__API_BASE__) || import.meta.env.VITE_API_URL || 'http://localhost:8080'
 
@@ -61,28 +67,40 @@ export default function Schedule(){
     }
   }, [userLeagueId, selectedLeague])
 
-  // NEW: Lade Ligen beim Mount
-  useEffect(() => {
-    loadLeagues()
-    // Lade Standings NICHT sofort - wir warten bis team geladen ist!
-  }, [])
+   // NEW: Lade Länder UND alle Ligen beim Mount
+   useEffect(() => {
+     loadCountries()
+     loadAllLeagues()
+   }, [])
+
+   // NEW: Wenn Team verfügbar ist, lade seine Liga vom Backend UND initialisiere
+   useEffect(() => {
+     if (team && team.id && allLeagues.length > 0 && !initialLoadComplete) {
+       loadUserTeamLeagueInfoAndInitialize()
+     }
+   }, [team, allLeagues, initialLoadComplete])
+
+   // NEW: Wenn Country wechselt (manuell NACH initial Load), filtere Ligen neu
+   useEffect(() => {
+     if (selectedCountry && allLeagues.length > 0 && initialLoadComplete) {
+       // Filtere Ligen für das neue Land
+       const countryLeagues = allLeagues.filter(l => l.country === selectedCountry)
+       setLeagues(countryLeagues)
+       // Setze erste Liga des neuen Landes
+       if (countryLeagues.length > 0) {
+         setSelectedLeague(countryLeagues[0].id)
+       }
+     }
+   }, [selectedCountry, allLeagues, initialLoadComplete])
 
   // NEW: Lade Standings ERST wenn team verfügbar ist (damit User-Team Name korrekt ist)
   useEffect(() => {
     if (team && team.id) {
       loadStandings()
     }
-  }, [team])
+   }, [team])
 
-  // NEW: Synchronisiere userLeagueLabel wenn Ligen geladen und userLeagueId gesetzt
-  useEffect(() => {
-    if (leagues.length > 0 && userLeagueId && !userLeagueLabel) {
-      const league = leagues.find(l => l.id === userLeagueId)
-      if (league) {
-        setUserLeagueLabel(league.divisionLabel)
-      }
-    }
-  }, [leagues, userLeagueId, userLeagueLabel, setUserLeagueLabel])
+   // REMOVED: Label soll beim Liga-Wechsel NICHT ändern - wird nur beim initialen Load gesetzt
 
    // ...existing code...
 
@@ -102,15 +120,52 @@ export default function Schedule(){
      }
    }, [selectedLeague, tab])
 
-  const loadCurrentMatchday = () => {
-    fetch(`${API_BASE}/api/v2/schedule/current-matchday`)
-      .then(r => r.json())
-      .then(data => {
-        setCurrentMatchday(data.currentMatchday || 1)
-        setDisplayedMatchday(data.currentMatchday || 1)
-      })
-      .catch(e => console.error('Fehler beim Laden des Spieltags:', e))
-  }
+   const loadCurrentMatchday = () => {
+     fetch(`${API_BASE}/api/v2/schedule/current-matchday`)
+       .then(r => r.json())
+       .then(data => {
+         setCurrentMatchday(data.currentMatchday || 1)
+         setDisplayedMatchday(data.currentMatchday || 1)
+       })
+       .catch(e => console.error('Fehler beim Laden des Spieltags:', e))
+   }
+
+   // NEW: Lade die Liga des aktuellen Teams vom Backend UND initialisiere sofort
+   const loadUserTeamLeagueInfoAndInitialize = async () => {
+     try {
+       if (!team || !team.id || allLeagues.length === 0) return
+       
+       const authRaw = localStorage.getItem('fm_auth')
+       const token = authRaw ? JSON.parse(authRaw).token : null
+       const headers = {}
+       if (token) headers['X-Auth-Token'] = token
+       
+       // Frage vom Backend ab, in welcher Liga dieses Team ist
+       const res = await fetch(`${API_BASE}/api/v2/teams/${team.id}/league-info`, { headers })
+       if (res.ok) {
+         const leagueInfo = await res.json()
+         
+         if (leagueInfo.leagueId) {
+           // Finde die Liga in allLeagues
+           const userLeague = allLeagues.find(l => l.id === leagueInfo.leagueId)
+           if (userLeague && userLeague.country) {
+             // Filtere Ligen für dieses Land
+             const countryLeagues = allLeagues.filter(l => l.country === userLeague.country)
+             
+             // Alle State-Updates synchron
+             setUserLeagueId(leagueInfo.leagueId)
+             setSelectedCountry(userLeague.country)
+             setLeagues(countryLeagues)
+             setSelectedLeague(leagueInfo.leagueId)
+             setUserLeagueLabel(userLeague.divisionLabel)
+             setInitialLoadComplete(true)
+           }
+         }
+       }
+     } catch (e) {
+       console.error('Fehler beim Laden der Team-Liga:', e)
+     }
+   }
 
   const loadMatchday = (dayNumber) => {
     setLoading(true)
@@ -152,21 +207,47 @@ export default function Schedule(){
       })
   }
 
-  // NEW: Lade verfügbare Ligen
-  const loadLeagues = () => {
-    fetch(`${API_BASE}/api/v2/schedule/leagues`)
-      .then(r => r.json())
-      .then(data => {
-        setLeagues(data)
-        // Setze Standard-Liga wenn nicht gesetzt
-        if (data.length > 0 && !userLeagueId) {
-          setSelectedLeague(data[0].id)
-          setUserLeagueId(data[0].id)
-          setUserLeagueLabel(data[0].divisionLabel)
-        }
-      })
-      .catch(e => console.error('Fehler beim Laden der Ligen:', e))
-  }
+   const loadCountries = () => {
+     fetch(`${API_BASE}/api/v2/schedule/countries`)
+       .then(r => r.json())
+       .then(data => {
+         setCountries(data)
+         setCountriesLoaded(true)
+       })
+       .catch(e => {
+         console.error('Fehler beim Laden der Länder:', e)
+         setCountriesLoaded(true)
+       })
+   }
+
+   // NEW: Lade ALLE Ligen (mit Land-Info)
+   const loadAllLeagues = () => {
+     fetch(`${API_BASE}/api/v2/schedule/leagues`)
+       .then(r => r.json())
+       .then(data => {
+         setAllLeagues(data)
+       })
+       .catch(e => {
+         console.error('Fehler beim Laden der Ligen:', e)
+         setAllLeagues([])
+       })
+   }
+
+   // Legacy: Lade verfügbare Ligen
+   const loadLeagues = () => {
+     fetch(`${API_BASE}/api/v2/schedule/leagues`)
+       .then(r => r.json())
+       .then(data => {
+         setLeagues(data)
+         // Setze Standard-Liga wenn nicht gesetzt
+         if (data.length > 0 && !userLeagueId) {
+           setSelectedLeague(data[0].id)
+           setUserLeagueId(data[0].id)
+           setUserLeagueLabel(data[0].divisionLabel)
+         }
+       })
+       .catch(e => console.error('Fehler beim Laden der Ligen:', e))
+   }
 
   const loadStatistics = () => {
     setLoading(true)
@@ -203,32 +284,34 @@ export default function Schedule(){
       })
   }
 
-  const simulateMatch = (matchId) => {
-    setSimulatingMatchId(matchId)
-    fetch(`${API_BASE}/api/v2/schedule/simulate-match/${matchId}`, { method: 'POST' })
-      .then(r => {
-        if (!r.ok) {
-          return r.text().then(text => {
-            throw new Error(text || `Error: ${r.status}`)
-          })
-        }
-        return r.json()
-      })
-      .then(data => {
-        // Update matchday with result
-        loadMatchday(displayedMatchday)
-        loadStandings()
-        // Lade automatisch den Spielbericht
-        loadMatchReport(matchId)
-        setLastSimulatedMatchId(matchId)
-        setSimulatingMatchId(null)
-      })
-      .catch(e => {
-        console.error('Fehler bei Simulation:', e)
-        alert('Simulation fehlgeschlagen: ' + e.message)
-        setSimulatingMatchId(null)
-      })
-  }
+   const simulateMatch = (matchId) => {
+     setSimulatingMatchId(matchId)
+     fetch(`${API_BASE}/api/v2/schedule/simulate-match/${matchId}`, { method: 'POST' })
+       .then(r => {
+         if (!r.ok) {
+           return r.text().then(text => {
+             throw new Error(text || `Error: ${r.status}`)
+           })
+         }
+         return r.json()
+       })
+       .then(data => {
+         // Update matchday with result
+         loadMatchday(displayedMatchday)
+         loadStandings()
+         // Lade automatisch den Spielbericht
+         loadMatchReport(matchId)
+         setLastSimulatedMatchId(matchId)
+         setSimulatingMatchId(null)
+         // Update budget und team info (sponsor payouts)
+         window.dispatchEvent(new Event('teamUpdated'))
+       })
+       .catch(e => {
+         console.error('Fehler bei Simulation:', e)
+         alert('Simulation fehlgeschlagen: ' + e.message)
+         setSimulatingMatchId(null)
+       })
+   }
 
   const getTeamName = (teamId) => {
     if (!teamId) return 'TBD'
@@ -301,73 +384,99 @@ export default function Schedule(){
           <div>
             <h3 style={{ margin: 0 }}>Spielplan & Tabelle</h3>
             {/* Liga-Anzeige als Text + separater Wechsel-Dropdown */}
-            <div style={{ fontSize: '0.9em', color: '#999', marginTop: 4, display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div>
-                📌 Deine Liga: <strong>{userLeagueLabel || 'Lädt...'}</strong>
-              </div>
-              
-              {/* Liga-Wechsel Dropdown (nur für View-Only) */}
-              {leagues.length > 0 && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontSize: '0.85em' }}>Andere Liga ansehen:</span>
-                  <select 
-                    value={selectedLeague || userLeagueId || ''}
-                    onChange={(e) => {
-                      const leagueId = Number(e.target.value)
-                      setSelectedLeague(leagueId)
-                      // NICHT setUserLeagueId() hier! Das sollte sich nicht ändern!
-                      // Der useEffect kümmert sich um das Laden!
-                    }}
-                    style={{
-                      padding: '4px 8px',
-                      borderRadius: 4,
-                      border: '1px solid rgba(255,255,255,0.2)',
-                      background: 'rgba(0,0,0,0.3)',
-                      color: '#fff',
-                      cursor: 'pointer',
-                      fontSize: '0.85em',
-                    }}
-                  >
-                    {leagues.map(league => (
-                      <option key={league.id} value={league.id}>
-                        {league.divisionLabel}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-            </div>
+             <div style={{ fontSize: '0.9em', color: '#999', marginTop: 4, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+               <div>
+                 📌 Deine Liga: <strong>{userLeagueLabel || 'Lädt...'}</strong>
+               </div>
+               
+               {/* Land-Auswahl */}
+               {countries.length > 0 && (
+                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                   <span style={{ fontSize: '0.85em' }}>Land:</span>
+                   <select 
+                     value={selectedCountry || ''}
+                     onChange={(e) => setSelectedCountry(e.target.value)}
+                     style={{
+                       padding: '4px 8px',
+                       borderRadius: 4,
+                       border: '1px solid rgba(255,255,255,0.2)',
+                       background: 'rgba(0,0,0,0.3)',
+                       color: '#fff',
+                       cursor: 'pointer',
+                       fontSize: '0.85em',
+                     }}
+                   >
+                     {countries.map(country => (
+                       <option key={country} value={country}>
+                         {country}
+                       </option>
+                     ))}
+                   </select>
+                 </div>
+               )}
+               
+               {/* Liga-Wechsel Dropdown (nur für View-Only) */}
+               {leagues.length > 0 && (
+                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                   <span style={{ fontSize: '0.85em' }}>Liga:</span>
+                   <select 
+                     value={selectedLeague || userLeagueId || ''}
+                     onChange={(e) => {
+                       const leagueId = Number(e.target.value)
+                       setSelectedLeague(leagueId)
+                     }}
+                     style={{
+                       padding: '4px 8px',
+                       borderRadius: 4,
+                       border: '1px solid rgba(255,255,255,0.2)',
+                       background: 'rgba(0,0,0,0.3)',
+                       color: '#fff',
+                       cursor: 'pointer',
+                       fontSize: '0.85em',
+                     }}
+                   >
+                     {leagues.map(league => (
+                       <option key={league.id} value={league.id}>
+                         {league.divisionLabel}
+                       </option>
+                     ))}
+                   </select>
+                 </div>
+               )}
+             </div>
           </div>
         </div>
         
-        <button
-           onClick={() => {
-             setLoading(true)
-             fetch(`${API_BASE}/api/v2/schedule/advance-matchday`, { method: 'POST' })
-              .then(r => r.json())
-              .then(data => {
-                // Aktualisiere den aktuellen Spieltag
-                setCurrentMatchday(data.newMatchday)
-                setDisplayedMatchday(data.newMatchday)
-                // Lade die neuen Daten
-                loadCurrentMatchday()
-                loadStandings()
-                loadMatchday(data.newMatchday)
-                setLoading(false)
-                // Zeige eine Nachricht
-                if (data.message) {
-                  alert(data.message)
-                }
-                // Wenn Saison Reset, lade auch Ligen neu
-                if (data.seasonReset) {
-                  loadLeagues()
-                }
-              })
-              .catch(e => {
-                console.error('Fehler beim Weiterschalten:', e)
-                setLoading(false)
-              })
-          }}
+         <button
+            onClick={() => {
+              setLoading(true)
+              fetch(`${API_BASE}/api/v2/schedule/advance-matchday`, { method: 'POST' })
+               .then(r => r.json())
+               .then(data => {
+                 // Aktualisiere den aktuellen Spieltag
+                 setCurrentMatchday(data.newMatchday)
+                 setDisplayedMatchday(data.newMatchday)
+                 // Lade die neuen Daten
+                 loadCurrentMatchday()
+                 loadStandings()
+                 loadMatchday(data.newMatchday)
+                 setLoading(false)
+                 // Zeige eine Nachricht
+                 if (data.message) {
+                   alert(data.message)
+                 }
+                 // Wenn Saison Reset, lade auch Ligen neu
+                 if (data.seasonReset) {
+                   loadLeagues()
+                 }
+                 // Update budget (season end bonuses)
+                 window.dispatchEvent(new Event('teamUpdated'))
+               })
+               .catch(e => {
+                 console.error('Fehler beim Weiterschalten:', e)
+                 setLoading(false)
+               })
+           }}
           disabled={loading}
           style={{
             padding: '8px 16px',
@@ -384,30 +493,32 @@ export default function Schedule(){
           {loading ? '⏳ Wird verarbeitet...' : (currentMatchday >= 25 ? '🏆 NEUE SAISON STARTEN!' : '→ Nächster Tag')}
         </button>
 
-        <button
-          onClick={() => {
-            setLoading(true)
-            fetch(`${API_BASE}/api/v2/schedule/simulate-season`, { method: 'POST' })
-              .then(r => r.json())
-              .then(data => {
-                // Aktualisiere den aktuellen Spieltag
-                setCurrentMatchday(data.newMatchday)
-                setDisplayedMatchday(data.newMatchday)
-                // Lade die neuen Daten
-                loadCurrentMatchday()
-                loadStandings()
-                loadMatchday(data.newMatchday)
-                setLoading(false)
-                // Zeige eine Nachricht
-                if (data.message) {
-                  alert(data.message)
-                }
-              })
-              .catch(e => {
-                console.error('Fehler bei Saison-Simulation:', e)
-                setLoading(false)
-              })
-          }}
+         <button
+           onClick={() => {
+             setLoading(true)
+             fetch(`${API_BASE}/api/v2/schedule/simulate-season`, { method: 'POST' })
+               .then(r => r.json())
+               .then(data => {
+                 // Aktualisiere den aktuellen Spieltag
+                 setCurrentMatchday(data.newMatchday)
+                 setDisplayedMatchday(data.newMatchday)
+                 // Lade die neuen Daten
+                 loadCurrentMatchday()
+                 loadStandings()
+                 loadMatchday(data.newMatchday)
+                 setLoading(false)
+                 // Zeige eine Nachricht
+                 if (data.message) {
+                   alert(data.message)
+                 }
+                 // Update budget (all season payouts)
+                 window.dispatchEvent(new Event('teamUpdated'))
+               })
+               .catch(e => {
+                 console.error('Fehler bei Saison-Simulation:', e)
+                 setLoading(false)
+               })
+           }}
           disabled={loading}
           style={{
             padding: '8px 16px',
@@ -436,6 +547,9 @@ export default function Schedule(){
           </button>
           <button className={tab === 'statistics' ? 'active' : ''} onClick={() => setTab('statistics')}>
             Statistiken
+          </button>
+          <button className={tab === 'cup' ? 'active' : ''} onClick={() => setTab('cup')}>
+            🏆 Pokal
           </button>
         </div>
 
@@ -496,135 +610,270 @@ export default function Schedule(){
                    <p className="muted">Transferfenster geöffnet</p>
                    <p className="muted" style={{ fontSize: '0.9em', marginTop: 8 }}>Keine Spiele in dieser Periode</p>
                  </div>
-               ) : matchday && matchday.matches ? (
-                 <div>
-                   {matchday.matches.map((match, idx) => (
-                    <div 
-                      key={idx}
-                      className="card"
-                      style={{ 
-                        display: 'flex', 
-                        justifyContent: 'space-between', 
-                        alignItems: 'center',
-                        padding: '12px',
-                        marginBottom: 8
-                      }}
-                    >
-                      <div style={{ flex: 1, textAlign: 'right', marginRight: 16 }}>
-                        <strong 
-                          style={{ 
-                            cursor: match.homeTeamId ? 'pointer' : 'default', 
-                            textDecoration: match.homeTeamId ? 'underline' : 'none',
-                            opacity: match.homeTeamId ? 1 : 0.6
-                          }}
-                          onClick={() => match.homeTeamId && openTeamDetails(match.homeTeamId)}
-                        >
-                          {getTeamName(match.homeTeamId)}
-                        </strong>
-                        <div className="muted" style={{ fontSize: '0.85em' }}>
-                          💪 {getTeamStrength(match.homeTeamId)}
-                        </div>
-                      </div>
-                      <div style={{ 
-                        fontSize: '1.1em', 
-                        fontWeight: 'bold',
-                        minWidth: 60,
-                        textAlign: 'center'
-                      }}>
-                        {formatMatchResult(match)}
-                      </div>
-                      <div style={{ flex: 1, textAlign: 'left', marginLeft: 16 }}>
-                        <strong 
-                          style={{ 
-                            cursor: match.awayTeamId ? 'pointer' : 'default', 
-                            textDecoration: match.awayTeamId ? 'underline' : 'none',
-                            opacity: match.awayTeamId ? 1 : 0.6
-                          }}
-                          onClick={() => match.awayTeamId && openTeamDetails(match.awayTeamId)}
-                        >
-                          {getTeamName(match.awayTeamId)}
-                        </strong>
-                        <div className="muted" style={{ fontSize: '0.85em' }}>
-                          💪 {getTeamStrength(match.awayTeamId)}
-                        </div>
-                      </div>
+                ) : matchday && matchday.matches ? (
+                  <div>
+                    {matchday.matches.map((match, idx) => (
+                     <div 
+                       key={idx}
+                       className="card match-card"
+                       style={{ 
+                         display: 'flex',
+                         justifyContent: 'space-between',
+                         alignItems: 'center',
+                         padding: '12px',
+                         marginBottom: 8
+                       }}
+                     >
+                       {/* Desktop: Horizontal Layout */}
+                       <div className="match-desktop" style={{
+                         display: 'flex',
+                         justifyContent: 'space-between',
+                         alignItems: 'center',
+                         width: '100%',
+                         gap: '16px'
+                       }}>
+                         <div style={{ flex: 1, textAlign: 'right', marginRight: 16 }}>
+                           <strong 
+                             style={{ 
+                               cursor: match.homeTeamId ? 'pointer' : 'default', 
+                               textDecoration: match.homeTeamId ? 'underline' : 'none',
+                               opacity: match.homeTeamId ? 1 : 0.6
+                             }}
+                             onClick={() => match.homeTeamId && openTeamDetails(match.homeTeamId)}
+                           >
+                             {getTeamName(match.homeTeamId)}
+                           </strong>
+                           <div className="muted" style={{ fontSize: '0.85em' }}>
+                             💪 {getTeamStrength(match.homeTeamId)}
+                           </div>
+                         </div>
+                         <div style={{ 
+                           fontSize: '1.1em', 
+                           fontWeight: 'bold',
+                           minWidth: 60,
+                           textAlign: 'center'
+                         }}>
+                           {formatMatchResult(match)}
+                         </div>
+                         <div style={{ flex: 1, textAlign: 'left', marginLeft: 16 }}>
+                           <strong 
+                             style={{ 
+                               cursor: match.awayTeamId ? 'pointer' : 'default', 
+                               textDecoration: match.awayTeamId ? 'underline' : 'none',
+                               opacity: match.awayTeamId ? 1 : 0.6
+                             }}
+                             onClick={() => match.awayTeamId && openTeamDetails(match.awayTeamId)}
+                           >
+                             {getTeamName(match.awayTeamId)}
+                           </strong>
+                           <div className="muted" style={{ fontSize: '0.85em' }}>
+                             💪 {getTeamStrength(match.awayTeamId)}
+                           </div>
+                         </div>
 
-                      {/* Simulate Button or Report Button */}
-                      {match.homeTeamId && match.awayTeamId && (
-                        <>
-                          {match.status !== 'played' && (
-                            <button
-                              onClick={() => simulateMatch(match.id)}
-                              disabled={simulatingMatchId === match.id || displayedMatchday !== currentMatchday}
-                              title={displayedMatchday !== currentMatchday ? 'Nur Spiele des aktuellen Spieltags können simuliert werden' : ''}
-                              style={{
-                                marginLeft: 12,
-                                padding: '6px 12px',
-                                borderRadius: 4,
-                                border: 'none',
-                                background: displayedMatchday === currentMatchday ? '#6366f1' : '#666',
-                                color: '#fff',
-                                cursor: simulatingMatchId === match.id || displayedMatchday !== currentMatchday ? 'not-allowed' : 'pointer',
-                                opacity: simulatingMatchId === match.id || displayedMatchday !== currentMatchday ? 0.6 : 1,
-                                fontSize: '0.9em',
-                                whiteSpace: 'nowrap'
-                              }}
-                            >
-                              {simulatingMatchId === match.id ? '⏳' : '▶️'} Sim
-                            </button>
-                          )}
-                          {match.status === 'played' && (
-                            <button
-                              onClick={() => loadMatchReport(match.id)}
-                              style={{
-                                marginLeft: 12,
-                                padding: '6px 12px',
-                                borderRadius: 4,
-                                border: 'none',
-                                background: '#10b981',
-                                color: '#fff',
-                                cursor: 'pointer',
-                                fontSize: '0.9em',
-                                whiteSpace: 'nowrap'
-                              }}
-                            >
-                              📋 Bericht
-                            </button>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  ))}
-                </div>
+                         {/* Desktop Buttons */}
+                         {match.homeTeamId && match.awayTeamId && (
+                           <>
+                             {match.status !== 'played' && (
+                               <button
+                                 onClick={() => simulateMatch(match.id)}
+                                 disabled={simulatingMatchId === match.id || displayedMatchday !== currentMatchday}
+                                 title={displayedMatchday !== currentMatchday ? 'Nur Spiele des aktuellen Spieltags können simuliert werden' : ''}
+                                 style={{
+                                   marginLeft: 12,
+                                   padding: '6px 12px',
+                                   borderRadius: 4,
+                                   border: 'none',
+                                   background: displayedMatchday === currentMatchday ? '#6366f1' : '#666',
+                                   color: '#fff',
+                                   cursor: simulatingMatchId === match.id || displayedMatchday !== currentMatchday ? 'not-allowed' : 'pointer',
+                                   opacity: simulatingMatchId === match.id || displayedMatchday !== currentMatchday ? 0.6 : 1,
+                                   fontSize: '0.9em',
+                                   whiteSpace: 'nowrap'
+                                 }}
+                               >
+                                 {simulatingMatchId === match.id ? '⏳' : '▶️'} Sim
+                               </button>
+                             )}
+                             {match.status === 'played' && (
+                               <button
+                                 onClick={() => loadMatchReport(match.id)}
+                                 style={{
+                                   marginLeft: 12,
+                                   padding: '6px 12px',
+                                   borderRadius: 4,
+                                   border: 'none',
+                                   background: '#10b981',
+                                   color: '#fff',
+                                   cursor: 'pointer',
+                                   fontSize: '0.9em',
+                                   whiteSpace: 'nowrap'
+                                 }}
+                               >
+                                 📋 Bericht
+                               </button>
+                             )}
+                           </>
+                         )}
+                       </div>
+
+                       {/* Mobile: Vertical Layout */}
+                       <div className="match-mobile" style={{
+                         display: 'none',
+                         flexDirection: 'column',
+                         width: '100%'
+                       }}>
+                       {/* Heimteam */}
+                       <div style={{ 
+                         display: 'flex', 
+                         justifyContent: 'space-between',
+                         alignItems: 'flex-start',
+                         marginBottom: '8px',
+                         paddingBottom: '8px',
+                         borderBottom: '1px solid rgba(255,255,255,0.1)'
+                       }}>
+                         <div style={{ flex: 1 }}>
+                           <strong 
+                             style={{ 
+                               cursor: match.homeTeamId ? 'pointer' : 'default', 
+                               textDecoration: match.homeTeamId ? 'underline' : 'none',
+                               opacity: match.homeTeamId ? 1 : 0.6,
+                               fontSize: '14px'
+                             }}
+                             onClick={() => match.homeTeamId && openTeamDetails(match.homeTeamId)}
+                           >
+                             {getTeamName(match.homeTeamId)}
+                           </strong>
+                           <div className="muted" style={{ fontSize: '0.8em', marginTop: '2px' }}>
+                             💪 {getTeamStrength(match.homeTeamId)}
+                           </div>
+                         </div>
+                         <div style={{ 
+                           fontSize: '16px', 
+                           fontWeight: 'bold',
+                           textAlign: 'center',
+                           minWidth: '50px'
+                         }}>
+                           {formatMatchResult(match).split(':')[0]}
+                         </div>
+                       </div>
+
+                       {/* Auswärtsteam */}
+                       <div style={{ 
+                         display: 'flex', 
+                         justifyContent: 'space-between',
+                         alignItems: 'flex-start',
+                         marginBottom: '8px'
+                       }}>
+                         <div style={{ flex: 1 }}>
+                           <strong 
+                             style={{ 
+                               cursor: match.awayTeamId ? 'pointer' : 'default', 
+                               textDecoration: match.awayTeamId ? 'underline' : 'none',
+                               opacity: match.awayTeamId ? 1 : 0.6,
+                               fontSize: '14px'
+                             }}
+                             onClick={() => match.awayTeamId && openTeamDetails(match.awayTeamId)}
+                           >
+                             {getTeamName(match.awayTeamId)}
+                           </strong>
+                           <div className="muted" style={{ fontSize: '0.8em', marginTop: '2px' }}>
+                             💪 {getTeamStrength(match.awayTeamId)}
+                           </div>
+                         </div>
+                         <div style={{ 
+                           fontSize: '16px', 
+                           fontWeight: 'bold',
+                           textAlign: 'center',
+                           minWidth: '50px'
+                         }}>
+                           {formatMatchResult(match).split(':')[1]}
+                         </div>
+                       </div>
+
+                         {/* Buttons */}
+                        {match.homeTeamId && match.awayTeamId && (
+                          <div style={{
+                            display: 'flex',
+                            gap: '8px',
+                            marginTop: '10px',
+                            flexWrap: 'wrap'
+                          }}>
+                            {match.status !== 'played' && (
+                              <button
+                                onClick={() => simulateMatch(match.id)}
+                                disabled={simulatingMatchId === match.id || displayedMatchday !== currentMatchday}
+                                title={displayedMatchday !== currentMatchday ? 'Nur Spiele des aktuellen Spieltags können simuliert werden' : ''}
+                                style={{
+                                  padding: '8px 12px',
+                                  borderRadius: 4,
+                                  border: 'none',
+                                  background: displayedMatchday === currentMatchday ? '#6366f1' : '#666',
+                                  color: '#fff',
+                                  cursor: simulatingMatchId === match.id || displayedMatchday !== currentMatchday ? 'not-allowed' : 'pointer',
+                                  opacity: simulatingMatchId === match.id || displayedMatchday !== currentMatchday ? 0.6 : 1,
+                                  fontSize: '0.85em',
+                                  whiteSpace: 'nowrap',
+                                  flex: '1 1 auto',
+                                  minWidth: '80px'
+                                }}
+                              >
+                                {simulatingMatchId === match.id ? '⏳' : '▶️'} Sim
+                              </button>
+                            )}
+                            {match.status === 'played' && (
+                              <button
+                                onClick={() => loadMatchReport(match.id)}
+                                style={{
+                                  padding: '8px 12px',
+                                  borderRadius: 4,
+                                  border: 'none',
+                                  background: '#10b981',
+                                  color: '#fff',
+                                  cursor: 'pointer',
+                                  fontSize: '0.85em',
+                                  whiteSpace: 'nowrap',
+                                  flex: '1 1 auto',
+                                  minWidth: '80px'
+                                }}
+                              >
+                                📋 Bericht
+                              </button>
+                            )}
+                          </div>
+                        )}
+                       </div>
+                     </div>
+                   ))}
+                 </div>
               ) : (
                 <p className="muted">Keine Spiele verfügbar</p>
               )}
             </div>
           )}
 
-          {tab === 'table' && (
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                <h4 style={{ margin: 0 }}>Tabelle</h4>
-              </div>
-              {loading ? (
-                <p className="muted">Lädt...</p>
-              ) : standings.length > 0 ? (
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr style={{ borderBottom: '2px solid rgba(255,255,255,0.2)' }}>
-                        <th style={{ padding: '8px', textAlign: 'left' }}>Pos</th>
-                        <th style={{ padding: '8px', textAlign: 'left' }}>Team</th>
-                        <th style={{ padding: '8px', textAlign: 'center' }}>💪 Stärke</th>
-                        <th style={{ padding: '8px', textAlign: 'center' }}>Sp</th>
-                        <th style={{ padding: '8px', textAlign: 'center' }}>W</th>
-                        <th style={{ padding: '8px', textAlign: 'center' }}>U</th>
-                        <th style={{ padding: '8px', textAlign: 'center' }}>V</th>
-                        <th style={{ padding: '8px', textAlign: 'center' }}>Tore</th>
-                        <th style={{ padding: '8px', textAlign: 'center' }}>Pkte</th>
-                      </tr>
-                    </thead>
+           {tab === 'table' && (
+             <div>
+               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                 <h4 style={{ margin: 0 }}>Tabelle</h4>
+               </div>
+               {loading ? (
+                 <p className="muted">Lädt...</p>
+               ) : standings.length > 0 ? (
+                 <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+                   <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '400px' }}>
+                     <thead>
+                       <tr style={{ borderBottom: '2px solid rgba(255,255,255,0.2)' }}>
+                         <th style={{ padding: '8px', textAlign: 'left', fontSize: '12px' }}>Pos</th>
+                         <th style={{ padding: '8px', textAlign: 'left', fontSize: '12px' }}>Team</th>
+                         <th style={{ padding: '8px', textAlign: 'center', fontSize: '11px' }}>Sp</th>
+                         <th style={{ padding: '8px', textAlign: 'center', fontSize: '11px' }}>W</th>
+                         <th style={{ padding: '8px', textAlign: 'center', fontSize: '11px' }}>U</th>
+                         <th style={{ padding: '8px', textAlign: 'center', fontSize: '11px' }}>V</th>
+                         <th style={{ padding: '8px', textAlign: 'center', fontSize: '11px' }}>Tor</th>
+                         <th style={{ padding: '8px', textAlign: 'center', fontSize: '12px' }}>Pkte</th>
+                       </tr>
+                     </thead>
                     <tbody>
                       {standings.map((row) => {
                         const rowClass = getPositionClass(row.position)
@@ -682,6 +931,10 @@ export default function Schedule(){
               )}
             </div>
           )}
+
+          {tab === 'cup' && (
+            <CupSection selectedCountry={selectedCountry} leagueId={selectedLeague} />
+          )}
         </div>
       </div>
 
@@ -701,16 +954,20 @@ export default function Schedule(){
             border: '1px solid rgba(255,255,255,0.2)',
             borderRadius: '8px',
             padding: '20px',
-            maxWidth: '600px',
+            maxWidth: '700px',
             width: '90%',
-            maxHeight: '80vh',
+            maxHeight: '90vh',
             overflowY: 'auto'
           }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: 16 }}>
               <div>
-                <h3 style={{ margin: 0, marginBottom: 4 }}>{selectedTeamDetails.teamName}</h3>
-                <div className="muted">💪 Teamstärke: {selectedTeamDetails.teamStrength}</div>
-                <div className="muted">Aufstellung: {selectedTeamDetails.playersInLineup}/11</div>
+                <h3 style={{ margin: 0, marginBottom: 8 }}>{selectedTeamDetails.teamName}</h3>
+                <div className="muted" style={{ fontSize: '0.9em', lineHeight: '1.4' }}>
+                  <div>💪 Teamstärke: <strong>{selectedTeamDetails.teamStrength}</strong></div>
+                  <div>🏟️ Stadion: <strong>{selectedTeamDetails.stadiumCapacity?.toLocaleString() || 'Unbekannt'} Plätze</strong></div>
+                  {selectedTeamDetails.country && <div>🌍 Land: <strong>{selectedTeamDetails.country}</strong></div>}
+                  {selectedTeamDetails.leagueName && <div>🏆 Liga: <strong>{selectedTeamDetails.leagueName}</strong></div>}
+                </div>
               </div>
               <button
                 onClick={() => setShowTeamModal(false)}
@@ -720,33 +977,71 @@ export default function Schedule(){
                   color: '#fff',
                   fontSize: '20px',
                   cursor: 'pointer',
-                  padding: '0 8px'
+                  padding: '0 8px',
+                  minWidth: '32px'
                 }}
               >
                 ✕
               </button>
             </div>
 
-            {selectedTeamDetails.lineup.length > 0 ? (
-              <div>
-                <h4>Aufstellung (4-4-2)</h4>
-                {selectedTeamDetails.lineup.map((player) => (
-                  <div key={player.playerId} className="card" style={{ marginBottom: 8 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <div>
-                        <strong>{player.playerName}</strong>
-                        <div className="muted">{player.position}</div>
-                      </div>
-                      <div style={{ textAlign: 'right' }}>
-                        <strong>Rating: {player.rating}</strong>
+            {/* Aufstellung Tab */}
+            <div style={{ marginBottom: '24px' }}>
+              <h4 style={{ marginBottom: '12px' }}>Aufstellung (Spieltag)</h4>
+              {selectedTeamDetails.lineup && selectedTeamDetails.lineup.length > 0 ? (
+                <div>
+                  {selectedTeamDetails.lineup.map((player) => (
+                    <div key={player.playerId} className="card" style={{ marginBottom: 8, padding: '10px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <div>
+                          <strong>{player.playerName}</strong>
+                          <div className="muted" style={{ fontSize: '0.85em' }}>{player.position}</div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <strong>{player.rating}</strong>
+                          <div className="muted" style={{ fontSize: '0.85em' }}>Rating</div>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="muted">Keine Aufstellung verfügbar</p>
-            )}
+                  ))}
+                </div>
+              ) : (
+                <p className="muted">Keine Aufstellung verfügbar</p>
+              )}
+            </div>
+
+            {/* Alle Spieler im Kader */}
+            <div>
+              <h4 style={{ marginBottom: '12px' }}>Kader ({selectedTeamDetails.allPlayers?.length || 0} Spieler)</h4>
+              {selectedTeamDetails.allPlayers && selectedTeamDetails.allPlayers.length > 0 ? (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9em' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '2px solid rgba(255,255,255,0.2)' }}>
+                        <th style={{ padding: '8px', textAlign: 'left' }}>Name</th>
+                        <th style={{ padding: '8px', textAlign: 'center' }}>Pos</th>
+                        <th style={{ padding: '8px', textAlign: 'center' }}>Rating</th>
+                        <th style={{ padding: '8px', textAlign: 'center' }}>Alter</th>
+                        <th style={{ padding: '8px', textAlign: 'center' }}>Land</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedTeamDetails.allPlayers.map((player) => (
+                        <tr key={player.playerId} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                          <td style={{ padding: '8px' }}>{player.playerName}</td>
+                          <td style={{ padding: '8px', textAlign: 'center', color: '#999', fontSize: '0.9em' }}>{player.position}</td>
+                          <td style={{ padding: '8px', textAlign: 'center', fontWeight: 'bold' }}>{player.rating}</td>
+                          <td style={{ padding: '8px', textAlign: 'center', color: '#999' }}>{player.age}</td>
+                          <td style={{ padding: '8px', textAlign: 'center', color: '#999', fontSize: '0.85em' }}>{player.country}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="muted">Kein Kader verfügbar</p>
+              )}
+            </div>
           </div>
         </div>
       )}

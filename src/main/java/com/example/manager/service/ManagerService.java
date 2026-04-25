@@ -58,6 +58,14 @@ public class ManagerService {
         return repositoryService.getAvailableLeagues();
     }
 
+    public List<String> getAvailableCountries() {
+        return repositoryService.getAvailableCountries();
+    }
+
+    public List<LeagueInfoDTO> getLeaguesByCountry(String country) {
+        return repositoryService.getLeaguesByCountry(country);
+    }
+
     public void initializeLigues() {
         repositoryService.initializeLigues();
     }
@@ -144,7 +152,7 @@ public class ManagerService {
             Team cpu = teams.get(rnd.nextInt(teams.size()));
             if (cpu.getId() == a.getSellerTeamId()) continue;
             // decide a max willingness based on player rating+potential
-            int willingness = Math.min(cpu.getBudget(), a.getPlayer().getRating() + a.getPlayer().getPotential() / 2 + rnd.nextInt(50));
+            int willingness = Math.min(cpu.getBudget(), a.getPlayer().getRating() + a.getPlayer().getOverallPotential() / 2 + rnd.nextInt(50));
             TransferAuction.Bid highest = a.getHighestBid();
             int current = highest == null ? 0 : highest.amount;
             int increment = 1000 + rnd.nextInt(10000);
@@ -197,7 +205,7 @@ public class ManagerService {
     public void simulateTrainingTick() {
         for (Player p : repositoryService.listPlayers()) {
             int growthChance = rnd.nextInt(100);
-            if (growthChance < Math.max(1, p.getPotential() / 10)) {
+            if (growthChance < Math.max(1, p.getOverallPotential() / 10)) {
                 int delta = 1 + rnd.nextInt(3);
                 p.setRating(Math.min(100, p.getRating() + delta));
             }

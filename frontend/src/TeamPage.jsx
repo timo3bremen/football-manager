@@ -1,8 +1,10 @@
-import React, { useMemo } from 'react'
+import React, { useMemo, useState } from 'react'
 import { useGame } from './GameContext'
+import ContractsSection from './ContractsSection'
 
 export default function TeamPage(){
   const { roster, lineup, formationRows, currentFormation, setFormation, assignPlayerToSlot, swapSlots, removePlayerFromSlot } = useGame()
+  const [teamSubTab, setTeamSubTab] = useState('lineup') // 'lineup' oder 'contracts'
 
   // Debug logging
   React.useEffect(() => {
@@ -123,129 +125,216 @@ export default function TeamPage(){
 
   return (
     <div>
-      <h3>Kader</h3>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-        <p className="muted">Ziehe Spieler per Drag & Drop auf die freien Positionen.</p>
-        <div style={{display:'flex',gap:16,alignItems:'center'}}>
-          <div style={{textAlign:'right'}}>
-            <div className="muted" style={{fontSize:'0.9em'}}>Teamstärke</div>
-            <div style={{fontSize:'1.3em',fontWeight:'bold',color:'#4ade80'}}>💪 {teamStrength}</div>
-          </div>
-          <div>
-            <label className="muted" style={{marginRight:8}}>Formation:</label>
-            <select value={currentFormation} onChange={e=>setFormation(e.target.value)} className="input">
-              {formations.map(f=> <option key={f} value={f}>{f}</option>)}
-            </select>
-          </div>
-        </div>
+      <h3>Team</h3>
+      
+      {/* Sub-Tab Navigation */}
+      <div className="menu" style={{marginBottom: 12}}>
+        <button 
+          className={teamSubTab === 'lineup' ? 'active' : ''} 
+          onClick={() => setTeamSubTab('lineup')}
+        >
+          🏟️ Aufstellung
+        </button>
+        <button 
+          className={teamSubTab === 'contracts' ? 'active' : ''} 
+          onClick={() => setTeamSubTab('contracts')}
+        >
+          📋 Verträge
+        </button>
       </div>
 
-      <div className="columns">
-        <div className="col-2 card">
-          <h4>Aufstellung ({assignedCount}/{Object.keys(lineup||{}).length})</h4>
-          <div className="pitch">
-            {formationRows.map((row,ri)=> (
-              <div key={ri} className="pitch-row">
-                {row.map(slotId => {
-                   const pid = lineup[slotId]
-                   const player = roster.find(r => r.id === pid || String(r.id) === String(pid))
+      {/* Aufstellung Sub-Tab */}
+      {teamSubTab === 'lineup' && (
+        <div>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+            <p className="muted">Ziehe Spieler per Drag & Drop auf die freien Positionen.</p>
+            <div style={{display:'flex',gap:16,alignItems:'center'}}>
+              <div style={{textAlign:'right'}}>
+                <div className="muted" style={{fontSize:'0.9em'}}>Teamstärke</div>
+                <div style={{fontSize:'1.3em',fontWeight:'bold',color:'#4ade80'}}>💪 {teamStrength}</div>
+              </div>
+              <div>
+                <label className="muted" style={{marginRight:8}}>Formation:</label>
+                <select value={currentFormation} onChange={e=>setFormation(e.target.value)} className="input">
+                  {formations.map(f=> <option key={f} value={f}>{f}</option>)}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className="columns">
+            <div className="col-2 card">
+              <h4>Aufstellung ({assignedCount}/{Object.keys(lineup||{}).length})</h4>
+              <div className="pitch">
+                {formationRows.map((row,ri)=> (
+                  <div key={ri} className="pitch-row">
+                    {row.map(slotId => {
+                       const pid = lineup[slotId]
+                       const player = roster.find(r => r.id === pid || String(r.id) === String(pid))
+                       return (
+                          <div key={slotId}
+                            className={`slot ${!player ? 'empty' : ''}`}
+                            draggable={!!player}
+                            onDragStart={player ? (e)=>onDragStartFromSlot(e, slotId) : undefined}
+                            onDragOver={(e)=>e.preventDefault()}
+                            onDrop={(e)=>onDropToSlot(e, slotId)}
+                            title={slotId}
+                          >
+                            {player ? (
+                              <div style={{width:'100%',height:'100%',display:'flex',flexDirection:'column',justifyContent:'space-between',padding:'4px'}}>
+                                <div>
+                                  <div style={{fontSize:'0.85em',fontWeight:'bold'}}>{player.name}</div>
+                                  <div className="draggable-hint" style={{fontSize:'0.7em'}}>{player.position}</div>
+                                  <div style={{fontSize:'0.7em',color:'#fbbf24',marginTop:2}}>⭐ {player.rating}</div>
+                                </div>
+                                
+                                {/* Fitness Bar */}
+                                <div style={{marginTop:'4px'}}>
+                                  {(() => {
+                                    const fitness = player.fitness !== undefined && player.fitness !== null ? player.fitness : 100;
+                                    const fitnessColor = fitness >= 80 ? '#10b981' : fitness >= 50 ? '#f59e0b' : '#ef4444';
+                                    return (
+                                      <>
+                                        <div style={{
+                                          width:'100%',
+                                          height:'6px',
+                                          background:'rgba(255,255,255,0.1)',
+                                          borderRadius:'3px',
+                                          overflow:'hidden',
+                                          border:'1px solid rgba(255,255,255,0.2)'
+                                        }}>
+                                          <div style={{
+                                            width:`${fitness}%`,
+                                            height:'100%',
+                                            background: fitnessColor,
+                                            transition:'all 0.3s ease'
+                                          }}></div>
+                                        </div>
+                                        <div style={{fontSize:'0.6em',color:'var(--muted)',marginTop:'2px',textAlign:'center'}}>
+                                          {fitness}%
+                                        </div>
+                                      </>
+                                    );
+                                  })()}
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="muted">{slotId}</div>
+                            )}
+                          </div>
+                       )
+                     })}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+             <div className="col-1 card" onDragOver={(e)=>e.preventDefault()} onDrop={onDropToRoster}>
+              <h4>Spieler (Roster)</h4>
+              <div className="draggable-hint">Ziehe Spieler auf das Feld oder hierher, um sie abzusetzen.</div>
+              <ul className="roster-list">
+                 {roster.map(p => {
+                   const inLineup = isPlayerInLineup(p.id)
                    return (
-                     <div key={slotId}
-                       className={`slot ${!player ? 'empty' : ''}`}
-                       draggable={!!player}
-                       onDragStart={player ? (e)=>onDragStartFromSlot(e, slotId) : undefined}
-                       onDragOver={(e)=>e.preventDefault()}
-                       onDrop={(e)=>onDropToSlot(e, slotId)}
-                       title={slotId}
-                     >
-                       {player ? (
-                         <div>
-                           <div>{player.name}</div>
-                           <div className="draggable-hint">{player.position}</div>
-                           <div style={{fontSize:'0.75em',color:'#fbbf24',marginTop:2}}>⭐ {player.rating}</div>
-                         </div>
-                       ) : (
-                         <div className="muted">{slotId}</div>
-                       )}
-                     </div>
+                      <li 
+                        key={p.id} 
+                        className="roster-item" 
+                        draggable 
+                        onDragStart={(e)=>onDragStartFromRoster(e,p.id)}
+                        style={{
+                          backgroundColor: inLineup ? 'rgba(52, 211, 153, 0.2)' : 'transparent',
+                          borderLeft: inLineup ? '3px solid #10b981' : '3px solid transparent',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center'
+                        }}
+                      >
+                        <div style={{flex:1}}>
+                          <div style={{fontWeight: inLineup ? 'bold' : 'normal', color: inLineup ? '#10b981' : 'inherit'}}>
+                            {p.name} {inLineup ? '✓' : ''}
+                          </div>
+                          <div style={{fontSize: '0.85em', color:'var(--muted)'}}>{p.position} • {p.country}</div>
+                          <div style={{fontSize: '0.8em', color:'#fbbf24',marginTop:2}}>⭐ Rating: {p.rating}</div>
+                          
+                          {/* Fitness Bar im Roster */}
+                          <div style={{marginTop:'6px'}}>
+                            {(() => {
+                              const fitness = p.fitness !== undefined && p.fitness !== null ? p.fitness : 100;
+                              const fitnessColor = fitness >= 80 ? '#10b981' : fitness >= 50 ? '#f59e0b' : '#ef4444';
+                              return (
+                                <>
+                                  <div style={{
+                                    width:'100%',
+                                    height:'4px',
+                                    background:'rgba(255,255,255,0.1)',
+                                    borderRadius:'2px',
+                                    overflow:'hidden',
+                                    border:'1px solid rgba(255,255,255,0.15)'
+                                  }}>
+                                    <div style={{
+                                      width:`${fitness}%`,
+                                      height:'100%',
+                                      background: fitnessColor,
+                                      transition:'all 0.3s ease'
+                                    }}></div>
+                                  </div>
+                                  <div style={{fontSize:'0.65em',color:'var(--muted)',marginTop:'2px'}}>
+                                    💪 Fitness: {fitness}%
+                                  </div>
+                                </>
+                              );
+                            })()}
+                          </div>
+                        </div>
+                        {!inLineup && (
+                          <button
+                            onClick={() => addPlayerToLineup(p.id)}
+                            style={{
+                              marginLeft: 12,
+                              padding: '4px 12px',
+                              borderRadius: 4,
+                              border: 'none',
+                              background: '#6366f1',
+                              color: '#fff',
+                              cursor: 'pointer',
+                              fontSize: '0.8em',
+                              whiteSpace: 'nowrap',
+                              flexShrink: 0
+                            }}
+                          >
+                            ➕ Aufstellung
+                          </button>
+                        )}
+                        {inLineup && (
+                          <button
+                            onClick={() => removePlayerFromSlot(Object.entries(lineup).find(([_, pid]) => pid === p.id)?.[0])}
+                            style={{
+                              marginLeft: 12,
+                              padding: '4px 12px',
+                              borderRadius: 4,
+                              border: 'none',
+                              background: '#ef4444',
+                              color: '#fff',
+                              cursor: 'pointer',
+                              fontSize: '0.8em',
+                              whiteSpace: 'nowrap',
+                              flexShrink: 0
+                            }}
+                          >
+                            ➖ Entfernen
+                          </button>
+                        )}
+                      </li>
                    )
                  })}
-              </div>
-            ))}
+              </ul>
+            </div>
           </div>
         </div>
+      )}
 
-         <div className="col-1 card" onDragOver={(e)=>e.preventDefault()} onDrop={onDropToRoster}>
-          <h4>Spieler (Roster)</h4>
-          <div className="draggable-hint">Ziehe Spieler auf das Feld oder hierher, um sie abzusetzen.</div>
-          <ul className="roster-list">
-             {roster.map(p => {
-               const inLineup = isPlayerInLineup(p.id)
-               return (
-                  <li 
-                    key={p.id} 
-                    className="roster-item" 
-                    draggable 
-                    onDragStart={(e)=>onDragStartFromRoster(e,p.id)}
-                    style={{
-                      backgroundColor: inLineup ? 'rgba(52, 211, 153, 0.2)' : 'transparent',
-                      borderLeft: inLineup ? '3px solid #10b981' : '3px solid transparent',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center'
-                    }}
-                  >
-                    <div style={{flex:1}}>
-                      <div style={{fontWeight: inLineup ? 'bold' : 'normal', color: inLineup ? '#10b981' : 'inherit'}}>
-                        {p.name} {inLineup ? '✓' : ''}
-                      </div>
-                      <div style={{fontSize: '0.85em', color:'var(--muted)'}}>{p.position} • {p.country}</div>
-                      <div style={{fontSize: '0.8em', color:'#fbbf24',marginTop:2}}>⭐ Rating: {p.rating}</div>
-                    </div>
-                    {!inLineup && (
-                      <button
-                        onClick={() => addPlayerToLineup(p.id)}
-                        style={{
-                          marginLeft: 12,
-                          padding: '4px 12px',
-                          borderRadius: 4,
-                          border: 'none',
-                          background: '#6366f1',
-                          color: '#fff',
-                          cursor: 'pointer',
-                          fontSize: '0.8em',
-                          whiteSpace: 'nowrap',
-                          flexShrink: 0
-                        }}
-                      >
-                        ➕ Aufstellung
-                      </button>
-                    )}
-                    {inLineup && (
-                      <button
-                        onClick={() => removePlayerFromSlot(Object.entries(lineup).find(([_, pid]) => pid === p.id)?.[0])}
-                        style={{
-                          marginLeft: 12,
-                          padding: '4px 12px',
-                          borderRadius: 4,
-                          border: 'none',
-                          background: '#ef4444',
-                          color: '#fff',
-                          cursor: 'pointer',
-                          fontSize: '0.8em',
-                          whiteSpace: 'nowrap',
-                          flexShrink: 0
-                        }}
-                      >
-                        ➖ Entfernen
-                      </button>
-                    )}
-                  </li>
-               )
-             })}
-          </ul>
-        </div>
-      </div>
+      {/* Verträge Sub-Tab */}
+      {teamSubTab === 'contracts' && <ContractsSection />}
     </div>
   )
 }

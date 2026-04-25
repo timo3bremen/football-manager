@@ -26,6 +26,7 @@ public class League {
 
 	private String name;
 	
+	private String country; // z.B. "Deutschland", "Spanien", "England"
 	private int division; // 1 = 1. Liga, 2 = 2. Liga, 3 = 3. Liga
 	private String divisionLabel; // z.B. "1. Liga", "2. Liga A", "3. Liga B"
 
@@ -78,6 +79,14 @@ public class League {
 
 	public void setDivisionLabel(String divisionLabel) {
 		this.divisionLabel = divisionLabel;
+	}
+
+	public String getCountry() {
+		return country;
+	}
+
+	public void setCountry(String country) {
+		this.country = country;
 	}
 
 	/**

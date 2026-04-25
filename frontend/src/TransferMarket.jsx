@@ -1,17 +1,31 @@
 import React, { useState, useEffect } from 'react'
 import { useGame } from './GameContext'
+import ScoutSection from './ScoutSection'
+import AuctionSection from './AuctionSection'
 
 export default function TransferMarket(){
   const { team } = useGame()
-  const [tab, setTab] = useState('available') // 'available', 'myPlayers', 'scout'
+  const [tab, setTab] = useState('available') // 'available', 'myPlayers', 'myOffers', 'scout', 'auction'
   const [availablePlayers, setAvailablePlayers] = useState([])
   const [myPlayers, setMyPlayers] = useState([])
+  const [myOutgoingOffers, setMyOutgoingOffers] = useState([]) // Meine Angebote für andere Spieler
+  const [myIncomingOffers, setMyIncomingOffers] = useState([]) // Angebote für meine Spieler
   const [loading, setLoading] = useState(false)
-  const [searchFilter, setSearchFilter] = useState({ position: '', minRating: '', maxRating: '' })
+  const [searchFilter, setSearchFilter] = useState({ position: '', minRating: '', maxRating: '', onTransferList: false })
   const [selectedPlayer, setSelectedPlayer] = useState(null)
-  const [showPriceModal, setShowPriceModal] = useState(false)
-  const [priceInput, setPriceInput] = useState(0)
-  const [playerToList, setPlayerToList] = useState(null)
+  const [showOfferModal, setShowOfferModal] = useState(false)
+  const [offerPrice, setOfferPrice] = useState(0)
+  const [playerForOffer, setPlayerForOffer] = useState(null)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [selectedTeamDetails, setSelectedTeamDetails] = useState(null)
+  const [showTeamModal, setShowTeamModal] = useState(false)
+  const [offerToAccept, setOfferToAccept] = useState(null)
+  const [showAcceptModal, setShowAcceptModal] = useState(false)
+  const [showNegotiateModal, setShowNegotiateModal] = useState(false)
+  const [negotiateOffer, setNegotiateOffer] = useState(null)
+  const [negotiationContractLength, setNegotiationContractLength] = useState(2)
+  const [negotiationSalary, setNegotiationSalary] = useState(0)
+  const PLAYERS_PER_PAGE = 50
 
   // API base: when frontend is served separately from backend (npm start with Vite),
   // set VITE_API_URL or window.__API_BASE__ to point to backend (e.g. http://localhost:8080)
@@ -26,274 +40,932 @@ export default function TransferMarket(){
     )
   }
 
-  // Lade verfügbare Spieler
-  useEffect(() => {
-    if (tab === 'available') {
-      loadAvailablePlayers()
+   // Lade verfügbare Spieler
+   useEffect(() => {
+     if (tab === 'available') {
+       loadAvailablePlayers()
+       setCurrentPage(1)
+     }
+   }, [tab])
+
+   // Lade meine Spieler
+   useEffect(() => {
+     if (tab === 'myPlayers') {
+       loadMyPlayers()
+     }
+   }, [tab])
+
+   // Lade meine Angebote
+   useEffect(() => {
+     if (tab === 'myOffers') {
+       loadMyOffers()
+     }
+   }, [tab])
+
+   const loadAvailablePlayers = () => {
+     setLoading(true)
+     fetch(`${API_BASE}/api/v2/transfer-market/available?teamId=${team.id}`)
+       .then(r => r.json())
+       .then(data => {
+         // Sortiere nach Marktwert absteigend
+         const sorted = data.sort((a, b) => (b.marketValue || 0) - (a.marketValue || 0))
+         setAvailablePlayers(sorted)
+         setLoading(false)
+       })
+       .catch(e => {
+         console.error('Fehler beim Laden der Spieler:', e)
+         setLoading(false)
+       })
+   }
+
+   const loadMyPlayers = () => {
+     setLoading(true)
+     fetch(`${API_BASE}/api/v2/players/team/${team.id}`)
+       .then(r => r.json())
+       .then(data => {
+         setMyPlayers(data)
+         setLoading(false)
+       })
+       .catch(e => {
+         console.error('Fehler beim Laden der Spieler:', e)
+         setLoading(false)
+       })
+   }
+
+   const loadMyOffers = () => {
+     setLoading(true)
+     // Lade meine abgegebenen Angebote und eingehende Angebote für meine Spieler
+     Promise.all([
+       fetch(`${API_BASE}/api/v2/transfer-market/my-offers/outgoing?teamId=${team.id}`).then(r => r.json()),
+       fetch(`${API_BASE}/api/v2/transfer-market/my-offers/incoming?teamId=${team.id}`).then(r => r.json())
+     ])
+       .then(([outgoing, incoming]) => {
+         setMyOutgoingOffers(outgoing || [])
+         setMyIncomingOffers(incoming || [])
+         setLoading(false)
+       })
+       .catch(e => {
+         console.error('Fehler beim Laden der Angebote:', e)
+         setLoading(false)
+       })
+   }
+
+   const handleSearch = () => {
+     setLoading(true)
+     const params = new URLSearchParams()
+     params.append('teamId', team.id)
+     if (searchFilter.position) params.append('position', searchFilter.position)
+     if (searchFilter.minRating) params.append('minRating', searchFilter.minRating)
+     if (searchFilter.maxRating) params.append('maxRating', searchFilter.maxRating)
+     if (searchFilter.onTransferList) params.append('onTransferList', 'true')
+     
+     fetch(`${API_BASE}/api/v2/transfer-market/available?${params}`)
+       .then(r => r.json())
+       .then(data => {
+         // Sortiere nach Marktwert absteigend
+         const sorted = data.sort((a, b) => (b.marketValue || 0) - (a.marketValue || 0))
+         setAvailablePlayers(sorted)
+         setCurrentPage(1)
+         setLoading(false)
+       })
+       .catch(e => {
+         console.error('Fehler bei der Suche:', e)
+         setLoading(false)
+       })
+   }
+
+   const makeOffer = (playerId) => {
+     const player = availablePlayers.find(p => p.id === playerId)
+     if (!player) return
+     
+     setPlayerForOffer(player)
+     setOfferPrice(player.marketValue || 0)
+     setShowOfferModal(true)
+   }
+
+   const submitOffer = () => {
+     if (!playerForOffer) return
+     
+     setLoading(true)
+     fetch(`${API_BASE}/api/v2/transfer-market/offer`, {
+       method: 'POST',
+       headers: { 'Content-Type': 'application/json' },
+       body: JSON.stringify({
+         playerId: playerForOffer.id,
+         buyingTeamId: team.id,
+         offerPrice: offerPrice
+       })
+     })
+       .then(r => {
+         if (r.ok) {
+           setShowOfferModal(false)
+           setPlayerForOffer(null)
+           setOfferPrice(0)
+           loadAvailablePlayers()
+           if (myOutgoingOffers.length > 0 || myIncomingOffers.length > 0) {
+             loadMyOffers()
+           }
+         } else {
+           alert('Fehler beim Abgeben des Angebots')
+         }
+         setLoading(false)
+       })
+       .catch(e => {
+         console.error('Fehler:', e)
+         setLoading(false)
+       })
+   }
+
+   const listPlayerForSale = (player) => {
+     setLoading(true)
+     fetch(`${API_BASE}/api/v2/transfer-market/list/${player.id}?teamId=${team.id}`, { method: 'POST' })
+       .then(r => {
+         if (r.ok) {
+           loadMyPlayers()
+         } else {
+           alert('Fehler beim Hinzufügen zur Transferliste')
+         }
+         setLoading(false)
+       })
+       .catch(e => {
+         console.error('Fehler:', e)
+         alert('Fehler beim Hinzufügen zur Transferliste')
+         setLoading(false)
+       })
+   }
+
+   const removePlayerFromSale = (playerId) => {
+     setLoading(true)
+     fetch(`${API_BASE}/api/v2/transfer-market/list/${playerId}?teamId=${team.id}`, { method: 'DELETE' })
+       .then(r => {
+         if (r.ok) {
+           loadMyPlayers()
+           loadAvailablePlayers()
+         } else {
+           alert('Fehler beim Entfernen des Spielers')
+         }
+         setLoading(false)
+       })
+       .catch(e => {
+         console.error('Fehler:', e)
+         setLoading(false)
+       })
+   }
+
+   const openTeamDetails = (teamId) => {
+     setLoading(true)
+     fetch(`${API_BASE}/api/teams/${teamId}/details`)
+       .then(r => r.json())
+       .then(data => {
+         setSelectedTeamDetails(data)
+         setShowTeamModal(true)
+         setLoading(false)
+       })
+       .catch(e => {
+         console.error('Fehler beim Laden der Team-Details:', e)
+         setLoading(false)
+       })
+   }
+
+    const acceptIncomingOffer = (offerInfo) => {
+      // Kombiniere das Angebot mit dem Spieler-Namen und allen Infos
+      const fullOffer = {
+        ...offerInfo,
+        name: offerInfo.playerName || 'Unbekannter Spieler'
+      }
+      setOfferToAccept(fullOffer)
+      setShowAcceptModal(true)
     }
-  }, [tab])
 
-  // Lade meine Spieler
-  useEffect(() => {
-    if (tab === 'myPlayers') {
-      loadMyPlayers()
+    const handleNegotiate = (offerInfo) => {
+      // Öffne Gehaltsverhandlungs-Modal
+      console.log("handleNegotiate called with offerInfo:", offerInfo)
+      console.log("Current team ID:", team.id)
+      setNegotiateOffer(offerInfo)
+      // Setze Standard-Werte: 2 Saisons und aktuelles Gehalt des Spielers
+      setNegotiationContractLength(2)
+      setNegotiationSalary(offerInfo.currentSalary || 0)
+      setShowNegotiateModal(true)
     }
-  }, [tab])
 
-  const loadAvailablePlayers = () => {
-    setLoading(true)
-    fetch(`${API_BASE}/api/v2/transfer-market/available`)
-      .then(r => r.json())
-      .then(data => {
-        setAvailablePlayers(data)
-        setLoading(false)
-      })
-      .catch(e => {
-        console.error('Fehler beim Laden der verfügbaren Spieler:', e)
-        setLoading(false)
-      })
-  }
-
-  const loadMyPlayers = () => {
-    setLoading(true)
-    fetch(`${API_BASE}/api/v2/players/team/${team.id}`)
-      .then(r => r.json())
-      .then(data => {
-        setMyPlayers(data)
-        setLoading(false)
-      })
-      .catch(e => {
-        console.error('Fehler beim Laden der Spieler:', e)
-        setLoading(false)
-      })
-  }
-
-  const handleSearch = () => {
-    setLoading(true)
-    const params = new URLSearchParams()
-    if (searchFilter.position) params.append('position', searchFilter.position)
-    if (searchFilter.minRating) params.append('minRating', searchFilter.minRating)
-    if (searchFilter.maxRating) params.append('maxRating', searchFilter.maxRating)
-    
-    fetch(`${API_BASE}/api/v2/transfer-market/search?${params}`)
-      .then(r => r.json())
-      .then(data => {
-        setAvailablePlayers(data)
-        setLoading(false)
-      })
-      .catch(e => {
-        console.error('Fehler bei der Suche:', e)
-        setLoading(false)
-      })
-  }
-
-  const buyPlayer = (playerId) => {
-    fetch(`${API_BASE}/api/v2/transfer-market/buy/${playerId}?teamId=${team.id}`, { method: 'POST' })
-      .then(r => {
-        if (r.ok) {
-          alert('Spieler erfolgreich gekauft!')
-          loadAvailablePlayers()
-        } else {
-          alert('Fehler beim Kauf des Spielers')
+    const confirmNegotiation = () => {
+      if (!negotiateOffer || negotiationSalary < 0) return
+      
+      setLoading(true)
+      
+      // Spieler akzeptiert, wenn das Gehalt gleich oder höher als aktuelles Gehalt ist
+      const playerAccepts = negotiationSalary >= (negotiateOffer.currentSalary || 0)
+      
+      if (playerAccepts) {
+        // Sende Gehaltsverhandlung zum Backend
+        const requestBody = {
+          offerId: negotiateOffer.id,
+          teamId: team.id,
+          newSalary: negotiationSalary,
+          contractLength: negotiationContractLength
         }
-      })
-      .catch(e => console.error('Fehler:', e))
-  }
-
-  const openPriceModal = (player) => {
-    setPlayerToList(player)
-    setPriceInput(player.marketValue || 0)
-    setShowPriceModal(true)
-  }
-
-  const listPlayerForSale = () => {
-    if (!playerToList) return
-    
-    // Note: price is currently not sent to backend (backend stores sale by teamId only).
-    // If you want to persist listing price, extend the API to accept a price parameter.
-    fetch(`${API_BASE}/api/v2/transfer-market/list/${playerToList.id}?teamId=${team.id}`, { method: 'POST' })
-      .then(r => {
-        if (r.ok) {
-          alert(`Spieler erfolgreich zum Verkauf angeboten für ${formatValue(priceInput)}!`)
-          setShowPriceModal(false)
-          setPlayerToList(null)
-          setPriceInput(0)
-          loadMyPlayers()
-        } else {
-          alert('Fehler beim Angebot des Spielers')
-        }
-      })
-      .catch(e => console.error('Fehler:', e))
-  }
-
-  const formatValue = (value) => {
-    if (value >= 1000000) {
-      return (value / 1000000).toFixed(1) + 'M €'
-    } else if (value >= 1000) {
-      return (value / 1000).toFixed(1) + 'K €'
+        
+        console.log("Sending negotiation request:", requestBody)
+        
+        fetch(`${API_BASE}/api/v2/transfer-market/complete-negotiation`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody)
+        })
+          .then(r => {
+            console.log("Response status:", r.status)
+            if (r.ok) {
+              return r.json()
+            }
+            return r.json().then(data => {
+              throw new Error(data.message || 'Fehler beim Abschließen der Verhandlung')
+            })
+          })
+          .then(data => {
+            console.log("Success response:", data)
+            if (data.success) {
+              setShowNegotiateModal(false)
+              loadMyOffers() // Reload offers
+              loadMyPlayers() // Reload squad
+              window.dispatchEvent(new Event('teamUpdated')) // Trigger team update (budget, etc)
+            } else {
+              alert('Fehler: ' + data.message)
+            }
+            setLoading(false)
+          })
+          .catch(e => {
+            console.error('Fehler:', e)
+            alert('Fehler beim Abschließen der Verhandlung: ' + e.message)
+            setLoading(false)
+          })
+      } else {
+        // Spieler lehnt ab
+        alert(`✗ ${negotiateOffer.playerName} hat abgelehnt - Gehalt zu niedrig!`)
+        setShowNegotiateModal(false)
+        setLoading(false)
+      }
     }
-    return value + ' €'
-  }
 
-  const PlayerCard = ({ player, showBuyBtn = false, showSellBtn = false, onBuy, onSell }) => (
-    <div className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: 8 }}>
-      <div>
-        <strong>{player.name}</strong>
-        <div className="muted">Position: {player.position} · Land: {player.country}</div>
-        <div className="muted">Alter: {player.age} · Rating: {player.rating} · Potenzial: {player.potential}</div>
-        <div className="muted">Gehalt: {formatValue(player.salary)} · Marktwert: {formatValue(player.marketValue)}</div>
-        {player.contractEndDate && (
-          <div className="muted">Vertrag bis: {new Date(player.contractEndDate).toLocaleDateString()}</div>
-        )}
+    const handleRejectOffer = (offerId) => {
+      if (!offerId) return
+      
+      setLoading(true)
+      fetch(`${API_BASE}/api/v2/transfer-market/reject-offer/${offerId}`, {
+        method: 'DELETE'
+      })
+        .then(r => {
+          if (r.ok) {
+            return r.json()
+          }
+          throw new Error('Fehler beim Ablehnen des Angebots')
+        })
+        .then(data => {
+          if (data.success) {
+            loadMyOffers() // Reload offers
+          } else {
+            alert('Fehler: ' + data.message)
+          }
+          setLoading(false)
+        })
+        .catch(e => {
+          console.error('Fehler:', e)
+          alert('Fehler beim Löschen des Angebots')
+          setLoading(false)
+        })
+    }
+
+    const confirmAcceptOffer = () => {
+      if (!offerToAccept) return
+      
+      setLoading(true)
+      fetch(`${API_BASE}/api/v2/transfer-market/accept-offer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          offerId: offerToAccept.id,
+          teamId: team.id
+        })
+      })
+        .then(r => {
+          if (r.ok) {
+            return r.json()
+          }
+          throw new Error('Fehler beim Annehmen des Angebots')
+        })
+        .then(data => {
+          if (data.success) {
+            setShowAcceptModal(false)
+            setOfferToAccept(null)
+            loadMyOffers()
+            loadMyPlayers()
+            // Aktualisiere den Team-Kontext, um Budget und Aufstellung zu refreshen
+            window.dispatchEvent(new Event('teamUpdated'))
+          } else {
+            alert('Fehler: ' + data.message)
+          }
+          setLoading(false)
+        })
+        .catch(e => {
+          console.error('Fehler:', e)
+          alert('Fehler beim Annehmen des Angebots')
+          setLoading(false)
+        })
+    }
+
+   const formatValue = (value) => {
+     if (value >= 1000000) {
+       return (value / 1000000).toFixed(1) + 'M €'
+     } else if (value >= 1000) {
+       return (value / 1000).toFixed(1) + 'K €'
+     }
+     return value + ' €'
+   }
+
+    const PlayerCard = ({ player, showOfferBtn = false, showSellBtn = false, showRemoveFromSaleBtn = false, showAcceptBtn = false, onOffer, onSell, onRemoveFromSale, onAccept, onTeamClick, offerInfo = null, hideOfferInfo = false, hideTeamInfo = false, onNegotiate = null, onRejectOffer = null }) => (
+      <div className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: 8 }}>
+        <div>
+          <strong>{player.name}</strong>
+          <div className="muted">Position: {player.position} · Land: {player.country}</div>
+          {!hideTeamInfo && player.teamId ? (
+            <div className="muted">
+              Team: <span 
+                style={{ cursor: 'pointer', textDecoration: 'underline', color: '#6366f1' }}
+                onClick={() => onTeamClick && onTeamClick(player.teamId)}
+              >
+                {player.teamName || `Team ${player.teamId}`}
+              </span>
+              {player.onTransferList && <span style={{ marginLeft: 8, color: '#f59e0b', fontWeight: 'bold' }}>🏪 Auf Transferliste</span>}
+            </div>
+          ) : (
+            !hideTeamInfo && <div className="muted" style={{ color: '#f59e0b', fontWeight: 'bold' }}>🏪 Auf Transferliste</div>
+          )}
+          <div className="muted">Alter: {player.age} · Rating: {player.rating} · Potenzial: {player.potential}</div>
+          <div className="muted">Gehalt: {formatValue(player.salary)} · Marktwert: {formatValue(player.marketValue)}</div>
+          {player.contractEndDate && (
+            <div className="muted">Vertrag bis: {new Date(player.contractEndDate).toLocaleDateString()}</div>
+          )}
+          {offerInfo && !hideOfferInfo && (
+            <div style={{ marginTop: 6, padding: 8, background: 'rgba(100, 150, 255, 0.1)', borderRadius: 4 }}>
+              <div className="muted">💰 Angebot: {formatValue(offerInfo.offerPrice)}</div>
+              <div className="muted">
+                📤 Von: <span 
+                  style={{ cursor: 'pointer', textDecoration: 'underline', color: '#6366f1', fontWeight: 'bold' }}
+                  onClick={() => onTeamClick && offerInfo.buyingTeamId && onTeamClick(offerInfo.buyingTeamId)}
+                >
+                  {offerInfo.fromTeamName || ('Team ' + offerInfo.buyingTeamId) || '...'}
+                </span>
+              </div>
+              {offerInfo.status && (
+                <div className="muted">
+                  Status: <strong style={{
+                    color: offerInfo.status === 'accepted' ? '#10b981' : offerInfo.status === 'rejected' ? '#ef4444' : '#f59e0b'
+                  }}>
+                    {offerInfo.status === 'accepted' ? '✓ Angenommen' : offerInfo.status === 'rejected' ? '✗ Abgelehnt' : 'Ausstehend'}
+                  </strong>
+                </div>
+              )}
+            </div>
+           )}
+          </div>
+        <div style={{ display: 'flex', gap: 6, flexDirection: 'column' }}>
+          {showOfferBtn && (
+            <button className="btn primary" onClick={() => onOffer(player.id)}>Angebot machen</button>
+          )}
+          {showSellBtn && (
+            <button className="btn secondary" onClick={() => onSell(player)}>Zum Verkauf anbieten</button>
+          )}
+          {showRemoveFromSaleBtn && (
+            <button className="btn warning" onClick={() => onRemoveFromSale(player.id)}>Von der Transferliste nehmen</button>
+          )}
+          {showAcceptBtn && offerInfo?.status === 'pending' && (
+            <button className="btn success" onClick={() => onAccept(offerInfo)}>✓ Annehmen</button>
+          )}
+          {offerInfo?.status === 'pending' && onRejectOffer && !showAcceptBtn && (
+            <button className="btn secondary" onClick={() => onRejectOffer(offerInfo.id)} style={{ background: '#ef4444' }}>✕ Ablehnen</button>
+          )}
+          {showAcceptBtn && offerInfo?.status === 'pending' && onRejectOffer && (
+            <button className="btn secondary" onClick={() => onRejectOffer(offerInfo.id)} style={{ background: '#ef4444' }}>✕ Ablehnen</button>
+          )}
+          {offerInfo?.status === 'accepted' && onNegotiate && (
+            <button className="btn info" onClick={() => onNegotiate(offerInfo)} style={{ background: '#8b5cf6' }}>💬 Gehaltsverhandlung</button>
+          )}
+          {offerInfo?.status === 'rejected' && onRejectOffer && (
+            <button className="btn secondary" onClick={() => onRejectOffer(offerInfo.id)} style={{ background: '#ef4444' }}>🗑️ Löschen</button>
+          )}
+          {offerInfo?.status === 'rejected' && !onRejectOffer && (
+            <span style={{ color: '#ef4444', fontWeight: 'bold', padding: '8px' }}>✗ Abgelehnt</span>
+          )}
+        </div>
       </div>
-      <div style={{ display: 'flex', gap: 6, flexDirection: 'column' }}>
-        {showBuyBtn && (
-          <button className="btn primary" onClick={() => onBuy(player.id)}>Kaufen</button>
-        )}
-        {showSellBtn && (
-          <button className="btn secondary" onClick={() => onSell(player)}>Auf Transfermarkt</button>
-        )}
-      </div>
-    </div>
-  )
+    )
+
+   // Pagination
+   const totalPages = Math.ceil(availablePlayers.length / PLAYERS_PER_PAGE)
+   const startIdx = (currentPage - 1) * PLAYERS_PER_PAGE
+   const paginatedPlayers = availablePlayers.slice(startIdx, startIdx + PLAYERS_PER_PAGE)
 
   return (
     <div>
       <h3>Transfermarkt</h3>
 
       <div className="card">
-        <div className="menu" style={{ marginBottom: 12 }}>
-          <button className={tab === 'available' ? 'active' : ''} onClick={() => setTab('available')}>
-            Verfügbar
-          </button>
-          <button className={tab === 'myPlayers' ? 'active' : ''} onClick={() => setTab('myPlayers')}>
-            Meine Spieler
-          </button>
-          <button className={tab === 'scout' ? 'active' : ''} onClick={() => setTab('scout')}>
-            Scout
-          </button>
-        </div>
+         <div className="menu" style={{ marginBottom: 12 }}>
+           <button className={tab === 'available' ? 'active' : ''} onClick={() => setTab('available')}>
+             Verfügbar
+           </button>
+           <button className={tab === 'myPlayers' ? 'active' : ''} onClick={() => setTab('myPlayers')}>
+             Meine Spieler
+           </button>
+           <button className={tab === 'myOffers' ? 'active' : ''} onClick={() => setTab('myOffers')}>
+             Meine Angebote
+           </button>
+           <button className={tab === 'auction' ? 'active' : ''} onClick={() => setTab('auction')}>
+             🏷️ Bieten
+           </button>
+           <button className={tab === 'scout' ? 'active' : ''} onClick={() => setTab('scout')}>
+             Scout
+           </button>
+         </div>
 
         <div className="panel">
-          {tab === 'available' && (
-            <div>
-              <h4>Verfügbare Spieler</h4>
-              
-              <div className="card" style={{ marginBottom: 12, padding: 12 }}>
-                <h5>Spieler suchen</h5>
-                <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-                  <input
-                    type="text"
-                    placeholder="Position (GK, DEF, MID, FWD)"
-                    value={searchFilter.position}
-                    onChange={(e) => setSearchFilter({ ...searchFilter, position: e.target.value })}
-                    style={{ padding: '6px 8px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.1)' }}
-                  />
-                  <input
-                    type="number"
-                    placeholder="Min Rating"
-                    value={searchFilter.minRating}
-                    onChange={(e) => setSearchFilter({ ...searchFilter, minRating: e.target.value })}
-                    style={{ padding: '6px 8px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.1)' }}
-                  />
-                  <input
-                    type="number"
-                    placeholder="Max Rating"
-                    value={searchFilter.maxRating}
-                    onChange={(e) => setSearchFilter({ ...searchFilter, maxRating: e.target.value })}
-                    style={{ padding: '6px 8px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.1)' }}
-                  />
-                  <button className="btn primary" onClick={handleSearch}>Suchen</button>
+           {tab === 'available' && (
+             <div>
+               <h4>Verfügbare Spieler (sortiert nach Marktwert)</h4>
+               
+                <div className="card" style={{ marginBottom: 12, padding: 12 }}>
+                  <h5>Spieler suchen und filtern</h5>
+                   <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                     <select
+                       value={searchFilter.position}
+                       onChange={(e) => setSearchFilter({ ...searchFilter, position: e.target.value })}
+                       style={{ 
+                         padding: '6px 8px', 
+                         borderRadius: '4px', 
+                         border: '1px solid rgba(255,255,255,0.1)',
+                         background: 'rgba(0,0,0,0.3)',
+                         color: '#fff',
+                         cursor: 'pointer'
+                       }}
+                     >
+                       <option value="">Alle Positionen</option>
+                       <option value="GK">GK (Torwart)</option>
+                       <option value="DEF">DEF (Abwehr)</option>
+                       <option value="MID">MID (Mittelfeld)</option>
+                       <option value="FWD">FWD (Angriff)</option>
+                     </select>
+                     <input
+                       type="number"
+                       placeholder="Min Rating"
+                       value={searchFilter.minRating}
+                       onChange={(e) => setSearchFilter({ ...searchFilter, minRating: e.target.value })}
+                       style={{ padding: '6px 8px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.1)' }}
+                     />
+                     <input
+                       type="number"
+                       placeholder="Max Rating"
+                       value={searchFilter.maxRating}
+                       onChange={(e) => setSearchFilter({ ...searchFilter, maxRating: e.target.value })}
+                       style={{ padding: '6px 8px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.1)' }}
+                     />
+                     <label style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', cursor: 'pointer' }}>
+                       <input
+                         type="checkbox"
+                         checked={searchFilter.onTransferList}
+                         onChange={(e) => setSearchFilter({ ...searchFilter, onTransferList: e.target.checked })}
+                       />
+                       <span>Nur Transferliste</span>
+                     </label>
+                     <button className="btn primary" onClick={handleSearch}>Suchen</button>
+                   </div>
                 </div>
-              </div>
 
-              {loading ? (
-                <p className="muted">Lädt...</p>
-              ) : availablePlayers.length ? (
-                availablePlayers.map((player) => (
-                  <PlayerCard
-                    key={player.id}
-                    player={player}
-                    showBuyBtn
-                    onBuy={buyPlayer}
-                  />
-                ))
-              ) : (
-                <p className="muted">Keine Spieler verfügbar</p>
-              )}
-            </div>
-          )}
+                {loading ? (
+                  <p className="muted">Lädt...</p>
+                ) : availablePlayers.length ? (
+                  paginatedPlayers.map((player) => (
+                    <PlayerCard
+                      key={player.id}
+                      player={player}
+                      showOfferBtn
+                      onOffer={makeOffer}
+                      onTeamClick={openTeamDetails}
+                    />
+                  ))
+                ) : (
+                  <p className="muted">Keine Spieler verfügbar</p>
+                )}
 
-          {tab === 'myPlayers' && (
-            <div>
-              <h4>Meine Spieler</h4>
-              {loading ? (
-                <p className="muted">Lädt...</p>
-              ) : myPlayers.length ? (
-                myPlayers.map((player) => (
-                  <PlayerCard
-                    key={player.id}
-                    player={player}
-                    showSellBtn
-                    onSell={openPriceModal}
-                  />
-                ))
-              ) : (
-                <p className="muted">Keine Spieler im Team</p>
-              )}
-            </div>
-          )}
+               {/* Pagination Controls */}
+               {totalPages > 1 && (
+                 <div className="pagination" style={{ marginTop: 16 }}>
+                   <button 
+                     className="btn" 
+                     onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                     disabled={currentPage === 1}
+                   >
+                     &lt; Vorherige
+                   </button>
+                   <span style={{ margin: '0 12px' }}>
+                     Seite {currentPage} von {totalPages}
+                   </span>
+                   <button 
+                     className="btn" 
+                     onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                     disabled={currentPage === totalPages}
+                   >
+                     Nächste &gt;
+                   </button>
+                 </div>
+               )}
+             </div>
+           )}
 
-          {tab === 'scout' && (
-            <div>
-              <h4>Scout / Talentsuche</h4>
-              <p className="muted">Hier kannst du nach neuen Talenten suchen und sie entwickeln.</p>
-              <p className="muted" style={{ fontSize: '0.9em', marginTop: 8 }}>
-                Funktion folgt noch...
-              </p>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {showPriceModal && (
-        <div className="modal-backdrop" onClick={() => setShowPriceModal(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <h4>Spieler zum Verkauf anbieten</h4>
-            {playerToList && (
+            {tab === 'myPlayers' && (
               <div>
-                <p><strong>{playerToList.name}</strong> ({playerToList.position})</p>
-                <div className="muted" style={{ marginBottom: 12 }}>Aktueller Marktwert: {formatValue(playerToList.marketValue)}</div>
+                <h4>Meine Spieler</h4>
                 
-                <label style={{ display: 'block', marginBottom: 8 }}>
-                  Angebotspreis:
-                  <input
-                    type="number"
-                    value={priceInput}
-                    onChange={(e) => setPriceInput(parseInt(e.target.value) || 0)}
-                    style={{ 
-                      width: '100%', 
-                      padding: '8px', 
-                      marginTop: 4, 
-                      borderRadius: '4px', 
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      color: '#fff',
-                      background: 'rgba(0,0,0,0.3)'
-                    }}
-                  />
-                </label>
-                
-                <div className="muted" style={{ marginBottom: 12 }}>Wird angeboten für: <strong>{formatValue(priceInput)}</strong></div>
-
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="btn primary" onClick={listPlayerForSale}>Auf Transfermarkt stellen</button>
-                  <button className="btn secondary" onClick={() => setShowPriceModal(false)}>Abbrechen</button>
-                </div>
+                {loading ? (
+                  <p className="muted">Lädt...</p>
+                 ) : myPlayers.length ? (
+                   myPlayers.map((player) => {
+                     // Prüfe ob Spieler auf Transferliste ist (neues onTransferList Flag)
+                     const isOnTransferList = player.onTransferList === true
+                     return (
+                       <PlayerCard
+                         key={player.id}
+                         player={player}
+                         showSellBtn={!isOnTransferList}
+                         showRemoveFromSaleBtn={isOnTransferList}
+                         onSell={listPlayerForSale}
+                         onRemoveFromSale={removePlayerFromSale}
+                         onTeamClick={openTeamDetails}
+                       />
+                     )
+                   })
+                 ) : (
+                  <p className="muted">Keine Spieler im Team</p>
+                )}
               </div>
             )}
+
+           {tab === 'myOffers' && (
+             <div>
+               <h4>Meine Angebote</h4>
+               
+               {loading ? (
+                 <p className="muted">Lädt...</p>
+               ) : (
+                 <>
+                      <h5 style={{ marginTop: 16, marginBottom: 12 }}>📤 Von mir abgegebene Angebote</h5>
+                       {myOutgoingOffers.length ? (
+                         myOutgoingOffers.map((offer) => (
+                           <PlayerCard
+                             key={offer.id}
+                             player={offer}
+                             hideTeamInfo={true}
+                             onTeamClick={openTeamDetails}
+                             onNegotiate={handleNegotiate}
+                             onRejectOffer={handleRejectOffer}
+                             offerInfo={{
+                               offerPrice: offer.offerPrice,
+                               fromTeamName: team.name,
+                               buyingTeamId: offer.buyingTeamId,
+                               status: offer.status,
+                               playerName: offer.name,
+                               currentSalary: offer.salary,
+                               id: offer.id
+                             }}
+                           />
+                         ))
+                       ) : (
+                         <p className="muted">Keine abgegebenen Angebote</p>
+                       )}
+                    
+                     <h5 style={{ marginTop: 20, marginBottom: 12 }}>📥 Eingehende Angebote für meine Spieler</h5>
+                     {myIncomingOffers.length ? (
+                       myIncomingOffers.map((offer) => (
+                         <PlayerCard
+                           key={offer.id}
+                           player={offer}
+                           hideTeamInfo={true}
+                           showAcceptBtn={offer.status === 'pending'}
+                           onAccept={acceptIncomingOffer}
+                           onTeamClick={openTeamDetails}
+                           onRejectOffer={handleRejectOffer}
+                           offerInfo={{
+                             offerPrice: offer.offerPrice,
+                             fromTeamName: offer.buyingTeamName,
+                             buyingTeamId: offer.buyingTeamId,
+                             status: offer.status,
+                             id: offer.id,
+                             playerName: offer.name,
+                             currentSalary: offer.salary
+                           }}
+                           hideOfferInfo={false}
+                         />
+                       ))
+                     ) : (
+                       <p className="muted">Keine eingehenden Angebote</p>
+                     )}
+                 </>
+                )}
+              </div>
+            )}
+
+           {tab === 'auction' && (
+             <AuctionSection />
+           )}
+
+           {tab === 'scout' && (
+             <ScoutSection />
+           )}
+         </div>
+       </div>
+
+       {showOfferModal && (
+         <div className="modal-backdrop" onClick={() => setShowOfferModal(false)}>
+           <div className="modal" onClick={e => e.stopPropagation()}>
+             <h4>Angebot für Spieler abgeben</h4>
+             {playerForOffer && (
+               <div>
+                 <p><strong>{playerForOffer.name}</strong> ({playerForOffer.position})</p>
+                 <div className="muted" style={{ marginBottom: 12 }}>Marktwert: {formatValue(playerForOffer.marketValue)}</div>
+                 
+                 <label style={{ display: 'block', marginBottom: 8 }}>
+                   Angebotspreis:
+                   <input
+                     type="number"
+                     value={offerPrice}
+                     onChange={(e) => setOfferPrice(parseInt(e.target.value) || 0)}
+                     style={{ 
+                       width: '100%', 
+                       padding: '8px', 
+                       marginTop: 4, 
+                       borderRadius: '4px', 
+                       border: '1px solid rgba(255,255,255,0.1)',
+                       color: '#fff',
+                       background: 'rgba(0,0,0,0.3)'
+                     }}
+                   />
+                 </label>
+                 
+                 <div className="muted" style={{ marginBottom: 12 }}>Dein Angebot: <strong>{formatValue(offerPrice)}</strong></div>
+
+                 <div style={{ display: 'flex', gap: 8 }}>
+                   <button className="btn primary" onClick={submitOffer} disabled={loading}>
+                     {loading ? 'Wird gesendet...' : 'Angebot absenden'}
+                   </button>
+                   <button className="btn secondary" onClick={() => setShowOfferModal(false)}>Abbrechen</button>
+                 </div>
+               </div>
+             )}
+           </div>
+         </div>
+       )}
+
+       {/* Team Details Modal */}
+       {showTeamModal && selectedTeamDetails && (
+         <div style={{
+           position: 'fixed',
+           top: 0, left: 0, right: 0, bottom: 0,
+           background: 'rgba(0,0,0,0.7)',
+           display: 'flex',
+           alignItems: 'center',
+           justifyContent: 'center',
+           zIndex: 1000
+         }} onClick={() => setShowTeamModal(false)}>
+           <div style={{
+             background: '#1a1a1a',
+             border: '1px solid rgba(255,255,255,0.2)',
+             borderRadius: '8px',
+             padding: '20px',
+             maxWidth: '700px',
+             width: '90%',
+             maxHeight: '90vh',
+             overflowY: 'auto'
+           }} onClick={(e) => e.stopPropagation()}>
+             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: 16 }}>
+               <div>
+                 <h3 style={{ margin: 0, marginBottom: 8 }}>{selectedTeamDetails.teamName}</h3>
+                 <div className="muted" style={{ fontSize: '0.9em', lineHeight: '1.4' }}>
+                   <div>💪 Teamstärke: <strong>{selectedTeamDetails.teamStrength}</strong></div>
+                   <div>🏟️ Stadion: <strong>{selectedTeamDetails.stadiumCapacity?.toLocaleString() || 'Unbekannt'} Plätze</strong></div>
+                   {selectedTeamDetails.country && <div>🌍 Land: <strong>{selectedTeamDetails.country}</strong></div>}
+                   {selectedTeamDetails.leagueName && <div>🏆 Liga: <strong>{selectedTeamDetails.leagueName}</strong></div>}
+                 </div>
+               </div>
+               <button
+                 onClick={() => setShowTeamModal(false)}
+                 style={{
+                   background: 'rgba(255,255,255,0.1)',
+                   border: 'none',
+                   color: '#fff',
+                   fontSize: '20px',
+                   cursor: 'pointer',
+                   padding: '0 8px',
+                   minWidth: '32px'
+                 }}
+               >
+                 ✕
+               </button>
+             </div>
+
+             {/* Aufstellung Tab */}
+             <div style={{ marginBottom: '24px' }}>
+               <h4 style={{ marginBottom: '12px' }}>Aufstellung (Spieltag)</h4>
+               {selectedTeamDetails.lineup && selectedTeamDetails.lineup.length > 0 ? (
+                 <div>
+                   {selectedTeamDetails.lineup.map((player) => (
+                     <div key={player.playerId} className="card" style={{ marginBottom: 8, padding: '10px' }}>
+                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                         <div>
+                           <strong>{player.playerName}</strong>
+                           <div className="muted" style={{ fontSize: '0.85em' }}>{player.position}</div>
+                         </div>
+                         <div style={{ textAlign: 'right' }}>
+                           <strong>{player.rating}</strong>
+                           <div className="muted" style={{ fontSize: '0.85em' }}>Rating</div>
+                         </div>
+                       </div>
+                     </div>
+                   ))}
+                 </div>
+                ) : (
+                  <p className="muted">Keine Aufstellung verfügbar</p>
+                )}
+             </div>
+
+             {/* Alle Spieler im Kader */}
+             <div>
+               <h4 style={{ marginBottom: '12px' }}>Kader ({selectedTeamDetails.allPlayers?.length || 0} Spieler)</h4>
+               {selectedTeamDetails.allPlayers && selectedTeamDetails.allPlayers.length > 0 ? (
+                 <div style={{ overflowX: 'auto' }}>
+                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9em' }}>
+                     <thead>
+                       <tr style={{ borderBottom: '2px solid rgba(255,255,255,0.2)' }}>
+                         <th style={{ padding: '8px', textAlign: 'left' }}>Name</th>
+                         <th style={{ padding: '8px', textAlign: 'center' }}>Pos</th>
+                         <th style={{ padding: '8px', textAlign: 'center' }}>Rating</th>
+                         <th style={{ padding: '8px', textAlign: 'center' }}>Alter</th>
+                         <th style={{ padding: '8px', textAlign: 'center' }}>Land</th>
+                       </tr>
+                     </thead>
+                     <tbody>
+                       {selectedTeamDetails.allPlayers.map((player) => (
+                         <tr key={player.playerId} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                           <td style={{ padding: '8px' }}>{player.playerName}</td>
+                           <td style={{ padding: '8px', textAlign: 'center', color: '#999', fontSize: '0.9em' }}>{player.position}</td>
+                           <td style={{ padding: '8px', textAlign: 'center', fontWeight: 'bold' }}>{player.rating}</td>
+                           <td style={{ padding: '8px', textAlign: 'center', color: '#999' }}>{player.age}</td>
+                           <td style={{ padding: '8px', textAlign: 'center', color: '#999', fontSize: '0.85em' }}>{player.country}</td>
+                         </tr>
+                       ))}
+                     </tbody>
+                   </table>
+                 </div>
+               ) : (
+                 <p className="muted">Kein Kader verfügbar</p>
+               )}
+             </div>
+           </div>
+         </div>
+       )}
+
+       {/* Accept Offer Modal */}
+       {showAcceptModal && offerToAccept && (
+          <div className="modal-backdrop" onClick={() => setShowAcceptModal(false)}>
+            <div className="modal" onClick={e => e.stopPropagation()}>
+              <h4>Angebot annehmen?</h4>
+              <div>
+                <p><strong>{offerToAccept.name}</strong></p>
+                <div className="muted" style={{ marginBottom: 12 }}>
+                  💰 Angebotspreis: <strong>{formatValue(offerToAccept.offerPrice)}</strong>
+                </div>
+                <div className="muted" style={{ marginBottom: 12 }}>
+                  📤 Angebot von: <span 
+                    style={{ cursor: 'pointer', textDecoration: 'underline', color: '#6366f1', fontWeight: 'bold' }}
+                    onClick={() => {
+                      openTeamDetails(offerToAccept.buyingTeamId)
+                      setShowAcceptModal(false)
+                    }}
+                  >
+                    {offerToAccept.fromTeamName || 'Team ' + offerToAccept.buyingTeamId}
+                  </span>
+                </div>
+                
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="btn primary" onClick={confirmAcceptOffer} disabled={loading}>
+                    {loading ? 'Wird verarbeitet...' : '✓ Angebot annehmen'}
+                  </button>
+                  <button className="btn secondary" onClick={() => setShowAcceptModal(false)}>Abbrechen</button>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
-      )}
-    </div>
-  )
+        )}
+
+        {/* Negotiation Modal */}
+        {showNegotiateModal && negotiateOffer && (
+          <div className="modal-backdrop" onClick={() => setShowNegotiateModal(false)}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '500px' }}>
+              <h4>💬 Gehaltsverhandlung</h4>
+              <div>
+                <p><strong>{negotiateOffer.playerName}</strong></p>
+                <div className="muted" style={{ marginBottom: 16 }}>
+                  Aktuelles Gehalt: {formatValue(negotiateOffer.currentSalary || 0)} pro Saison
+                </div>
+
+                <div style={{ marginBottom: 16 }}>
+                  <label style={{ display: 'block', marginBottom: 8 }}>
+                    <strong>Vertragslaufzeit (Saisons)</strong>
+                    <input
+                      type="number"
+                      min="1"
+                      max="5"
+                      value={negotiationContractLength}
+                      onChange={(e) => setNegotiationContractLength(Math.min(5, Math.max(1, parseInt(e.target.value) || 1)))}
+                      style={{
+                        width: '100%',
+                        padding: '8px',
+                        marginTop: 4,
+                        borderRadius: '4px',
+                        border: '1px solid rgba(255,255,255,0.1)',
+                        color: '#fff',
+                        background: 'rgba(0,0,0,0.3)',
+                        fontSize: '14px'
+                      }}
+                    />
+                    <div className="muted" style={{ fontSize: '0.85em', marginTop: 4 }}>
+                      Maximum 5 Saisons
+                    </div>
+                  </label>
+                </div>
+
+                <div style={{ marginBottom: 16 }}>
+                  <label style={{ display: 'block', marginBottom: 8 }}>
+                    <strong>Gehalt pro Saison</strong>
+                    <input
+                      type="number"
+                      min="0"
+                      value={negotiationSalary}
+                      onChange={(e) => setNegotiationSalary(parseInt(e.target.value) || 0)}
+                      style={{
+                        width: '100%',
+                        padding: '8px',
+                        marginTop: 4,
+                        borderRadius: '4px',
+                        border: '1px solid rgba(255,255,255,0.1)',
+                        color: '#fff',
+                        background: 'rgba(0,0,0,0.3)',
+                        fontSize: '14px'
+                      }}
+                    />
+                    <div className="muted" style={{ fontSize: '0.85em', marginTop: 4 }}>
+                      {negotiationSalary >= (negotiateOffer.currentSalary || 0) ? (
+                        <span style={{ color: '#10b981' }}>✓ Spieler wird akzeptieren</span>
+                      ) : (
+                        <span style={{ color: '#ef4444' }}>✗ Zu niedrig - Spieler wird ablehnen</span>
+                      )}
+                    </div>
+                  </label>
+                </div>
+
+                <div style={{ background: 'rgba(100, 150, 255, 0.1)', padding: 12, borderRadius: 4, marginBottom: 16 }}>
+                  <div className="muted" style={{ marginBottom: 8 }}>
+                    <strong>Vertragsdetails:</strong>
+                  </div>
+                  <div className="muted">
+                    💼 Laufzeit: <strong>{negotiationContractLength} Saisons</strong>
+                  </div>
+                  <div className="muted">
+                    💰 Gehalt pro Saison: <strong>{formatValue(negotiationSalary)}</strong>
+                  </div>
+                  <div className="muted">
+                    📊 Gesamtkosten: <strong>{formatValue(negotiationSalary * negotiationContractLength)}</strong>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button 
+                    className="btn primary" 
+                    onClick={confirmNegotiation} 
+                    disabled={loading || negotiationSalary < 0}
+                    style={{ flex: 1 }}
+                  >
+                    {loading ? 'Wird verarbeitet...' : '✓ Verhandlung abschließen'}
+                  </button>
+                  <button 
+                    className="btn secondary" 
+                    onClick={() => setShowNegotiateModal(false)}
+                    style={{ flex: 1 }}
+                  >
+                    Abbrechen
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+     </div>
+   )
 }

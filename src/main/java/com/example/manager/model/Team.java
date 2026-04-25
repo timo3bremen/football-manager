@@ -22,20 +22,28 @@ public class Team {
     @Transient
     private List<Lineup> lineups = new ArrayList<>();
     
-    private int budget; // simple integer budget
+    @Column(name = "budget")
+    private long budget; // Budget in Euro
+    
+    @Column(name = "is_cpu", nullable = false)
+    private boolean isCPU = true; // Flag ob das Team ein CPU-Team ist (default: true)
+
+    @Column(name = "active_formation", length = 10)
+    private String activeFormation = "4-4-2"; // Aktive Formation (default: 4-4-2)
 
     public Team() {
     }
 
-    public Team(String name, int budget) {
+    public Team(String name, long budget) {
         this.name = name;
         this.budget = budget;
+        this.isCPU = true; // CPU-Teams per default
     }
 
     /**
      * Construct a team with an explicit id (used when loading from DB).
      */
-    public Team(long id, String name, int budget) {
+    public Team(long id, String name, long budget) {
         this.id = id;
         this.name = name;
         this.budget = budget;
@@ -85,11 +93,35 @@ public class Team {
     }
 
     public int getBudget() {
+        return (int) budget;
+    }
+
+    public void setBudget(long budget) {
+        this.budget = budget;
+    }
+    
+    public long getBudgetAsLong() {
         return budget;
     }
 
-    public void setBudget(int budget) {
+    public void setBudgetAsLong(long budget) {
         this.budget = budget;
+    }
+
+    public boolean isCPU() {
+        return isCPU;
+    }
+
+    public void setCPU(boolean isCPU) {
+        this.isCPU = isCPU;
+    }
+
+    public String getActiveFormation() {
+        return activeFormation;
+    }
+
+    public void setActiveFormation(String activeFormation) {
+        this.activeFormation = activeFormation != null ? activeFormation : "4-4-2";
     }
 
     public void addPlayer(Player p) {

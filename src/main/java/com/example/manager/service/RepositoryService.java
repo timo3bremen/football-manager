@@ -22,6 +22,7 @@ import com.example.manager.dto.MatchSimulationResultDTO;
 import com.example.manager.dto.PlayerLineupDTO;
 import com.example.manager.dto.PlayerStatisticsDTO;
 import com.example.manager.dto.TeamDetailsDTO;
+import com.example.manager.model.CupTournament;
 import com.example.manager.model.GameState;
 import com.example.manager.model.GameStateTracking;
 import com.example.manager.model.League;
@@ -32,9 +33,11 @@ import com.example.manager.model.MatchEvent;
 import com.example.manager.model.Matchday;
 import com.example.manager.model.Player;
 import com.example.manager.model.Schedule;
-import com.example.manager.model.StadiumPart;
 import com.example.manager.model.Team;
+import com.example.manager.model.Transaction;
 import com.example.manager.model.User;
+import com.example.manager.model.YouthPlayer;
+import com.example.manager.repository.CupTournamentRepository;
 import com.example.manager.repository.GameStateRepository;
 import com.example.manager.repository.GameStateTrackingRepository;
 import com.example.manager.repository.LeagueRepository;
@@ -45,11 +48,11 @@ import com.example.manager.repository.MatchRepository;
 import com.example.manager.repository.MatchdayRepository;
 import com.example.manager.repository.PlayerRepository;
 import com.example.manager.repository.ScheduleRepository;
-import com.example.manager.repository.StadiumPartRepository;
 import com.example.manager.repository.TeamRepository;
 import com.example.manager.repository.UserRepository;
 import com.example.manager.util.PlayerNameGenerator;
 import com.example.manager.util.TeamNameGenerator;
+import com.example.manager.util.YouthPlayerGenerator;
 
 /**
  * New repository-based service using Spring Data JPA.
@@ -68,9 +71,6 @@ public class RepositoryService {
 
 	@Autowired
 	private UserRepository userRepository;
-
-	@Autowired
-	private StadiumPartRepository stadiumPartRepository;
 
 	@Autowired
 	private GameStateRepository gameStateRepository;
@@ -96,6 +96,21 @@ public class RepositoryService {
 	@Autowired
 	private GameStateTrackingRepository gameStateTrackingRepository;
 
+	@Autowired
+	private com.example.manager.repository.SponsorRepository sponsorRepository;
+
+	@Autowired
+	private com.example.manager.repository.TransactionRepository transactionRepository;
+
+	@Autowired
+	private com.example.manager.repository.StadiumBuildRepository stadiumBuildRepository;
+
+	@Autowired
+	private CupService cupService;
+
+	@Autowired
+	private CupTournamentRepository cupTournamentRepository;
+
 	private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 	private final Map<String, String> sessions = new HashMap<>(); // token -> username
 	private final Random random = new Random();
@@ -118,7 +133,8 @@ public class RepositoryService {
 	}
 
 	/**
-	 * Registriert einen User mit Ligawahl (neue Version)
+	 * Registriert einen User mit Ligawahl (neue Version) WICHTIG: Das neue Team
+	 * übernimmt die Daten vom alten CPU-Team und die Liga-Daten bleiben erhalten!
 	 */
 	@Transactional
 	public String registerUserWithLeague(String username, String password, String teamName, Long leagueId) {
@@ -126,18 +142,13 @@ public class RepositoryService {
 			throw new IllegalArgumentException("user exists");
 		}
 
-		// Erstelle Team
-		Team team = new Team(teamName, 100000);
-		team = saveTeam(team);
-
-		// Finde die Liga und tausche einen zufälligen CPU-Team-Slot
+		// Finde die Liga und wähle einen zufälligen CPU-Team-Slot
 		League league = leagueRepository.findById(leagueId).orElse(null);
 		if (league == null) {
 			throw new IllegalArgumentException("league not found");
 		}
 
-		// Finde zufälligen gefüllten Slot (CPU-Team) und ersetze ihn mit dem neuen
-		// User-Team
+		// Finde zufälligen gefüllten Slot (CPU-Team) der ersetzt werden soll
 		List<LeagueSlot> filledSlots = new ArrayList<>();
 		for (LeagueSlot slot : league.getSlots()) {
 			if (slot.getTeamId() != null) {
@@ -145,30 +156,49 @@ public class RepositoryService {
 			}
 		}
 
-		// Wenn keine gefüllten Slots vorhanden, füge zum ersten leeren hinzu
-		if (!filledSlots.isEmpty()) {
-			LeagueSlot randomSlot = filledSlots.get(random.nextInt(filledSlots.size()));
-			Long oldTeamId = randomSlot.getTeamId();
-			randomSlot.setTeamId(team.getId());
-			leagueSlotRepository.save(randomSlot);
-			// Alte Team löschen (war CPU-Team)
-			if (oldTeamId != null) {
-				deleteTeamCascade(oldTeamId);
-			}
-			// WICHTIG: Regeneriere den Spielplan nach dem Austausch des Teams!
-			// Das stellt sicher, dass alle Matches die neuen Team IDs haben
-			updateSchedule(league);
-		} else {
-			// Leeren Slot hinzufügen
+		// Wenn keine gefüllten Slots vorhanden, erstelle neues Team
+		if (filledSlots.isEmpty()) {
+			Team team = new Team(teamName, 1000000);
+			team.setCPU(false); // Markiere als User-Team (kein CPU-Team)
+			team = saveTeam(team);
 			LeagueSlot emptySlot = league.addTeam(team);
 			if (emptySlot != null) {
 				leagueSlotRepository.save(emptySlot);
 			}
+			// Erstelle User mit Liga-Zuordnung
+			User user = new User(username, passwordEncoder.encode(password), team.getId(), leagueId);
+			userRepository.save(user);
+			String token = UUID.randomUUID().toString();
+			sessions.put(token, username);
+			return token;
 		}
 
-		// Erstelle User mit Liga-Zuordnung
-		User user = new User(username, passwordEncoder.encode(password), team.getId(), leagueId);
+		// Wähle zufälligen CPU-Team Slot aus
+		LeagueSlot randomSlot = filledSlots.get(random.nextInt(filledSlots.size()));
+		Long oldTeamId = randomSlot.getTeamId();
+
+		// WICHTIG: Aktualisiere BESTEHENDES Team statt neues zu erstellen!
+		// Das übernimmt alle Daten (Spieler, Stadion, Lineups) vom alten Team
+		Team oldTeam = teamRepository.findById(oldTeamId).orElse(null);
+		if (oldTeam == null) {
+			throw new IllegalArgumentException("Old team not found");
+		}
+
+		// Update Team Name
+		oldTeam.setName(teamName);
+//		oldTeam.setBudget(100000); // Reset Budget
+		oldTeam.setCPU(false); // Markiere als User-Team (kein CPU-Team mehr)
+		teamRepository.save(oldTeam);
+
+		// Verwende oldTeamId als Team-ID für den neuen User
+		Long userTeamId = oldTeamId;
+
+		// Erstelle User mit Liga-Zuordnung (mit dem bestehenden Team!)
+		User user = new User(username, passwordEncoder.encode(password), userTeamId, leagueId);
 		userRepository.save(user);
+
+		System.out.println("[RepositoryService] Benutzer '" + username + "' registriert in Liga " + leagueId
+				+ " mit bestehendem Team " + oldTeamId + " (" + oldTeam.getName() + ")");
 
 		String token = UUID.randomUUID().toString();
 		sessions.put(token, username);
@@ -269,8 +299,8 @@ public class RepositoryService {
 			// Delete lineups
 			lineupRepository.deleteByTeamId(teamId);
 
-			// Delete stadium parts
-			stadiumPartRepository.deleteByTeamId(teamId);
+			// Delete transactions
+			transactionRepository.deleteByTeamId(teamId);
 
 			// Delete players
 			List<Player> players = playerRepository.findByTeamId(teamId);
@@ -322,46 +352,8 @@ public class RepositoryService {
 		if (saved.getId() != null) {
 			List<Player> existing = playerRepository.findByTeamId(saved.getId());
 			if (existing.isEmpty()) {
-				String[] positions = { "GK", "GK", "DEF", "DEF", "DEF", "DEF", "DEF", "DEF", "MID", "MID", "MID", "MID",
-						"MID", "MID", "MID", "FWD", "FWD", "FWD" };
-
-				// Generate 18 random fictional players with random names and countries
-				Random rand = new Random();
-				for (int i = 0; i < 18; i++) {
-					String[] playerData = PlayerNameGenerator.generatePlayerNameAndCountry();
-
-					// Generate realistic rating (50-90)
-					int rating = 50 + rand.nextInt(41);
-
-					int age = 18 + rand.nextInt(17); // Age 18-34
-					int potential = generatePotential(rating, age);
-					// Generate potential: Rating -5 to +20, max 99
-
-					Player p = new Player(playerData[0], // Random name
-							rating, potential, (int) (Math.random() * 20) - 10, // Form -10 to +10
-							positions[i], playerData[1] // Random country
-					);
-
-					// Set realistic player attributes
-					long salary = 50000L + (long) rating * rating * 100; // Salary based on rating
-					long contractYears = 1 + rand.nextInt(5); // Contract 1-5 years
-					long contractEndDate = System.currentTimeMillis() + (contractYears * 30L * 24L * 60L * 60L * 1000L);
-
-					p.setAge(age);
-					p.setSalary(salary);
-					p.setContractEndDate(contractEndDate);
-					p.setTeamId(saved.getId());
-
-					// Calculate market value based on age, rating, and contract
-					p.calculateMarketValue();
-					playerRepository.save(p);
-				}
-
-				// Initialize stadium parts
-				for (int i = 0; i < 30; i++) {
-					StadiumPart part = new StadiumPart(saved.getId(), i, false, null);
-					stadiumPartRepository.save(part);
-				}
+				// Benutzer-Teams bekommen 1. Liga Spieler
+				initializeTeamPlayers(saved, 1);
 
 				// Initialize lineup slots for all formations with playerId = null
 				String[] formationIds = { "4-4-2", "4-3-3", "3-5-2" };
@@ -625,30 +617,6 @@ public class RepositoryService {
 		System.out.println("[RepositoryService] Generated " + matchdayIdx + " matchdays (double round-robin)");
 	}
 
-	private int generatePotential(int rating, int age) {
-		Random rand = new Random();
-		int potential = 0;
-
-		// Ensure the bound is always positive for rand.nextInt()
-		if (rating < 70) {
-			// Higher potential for lower-rated players
-			int bound = Math.max(1, 45 - age);
-			potential = Math.min(99, rating + rand.nextInt(bound));
-		} else if (rating < 80) {
-			// Medium potential for mid-rated players
-			int bound = Math.max(1, 40 - age);
-			potential = Math.min(99, rating - 3 + rand.nextInt(bound));
-		} else {
-			// Lower potential for high-rated players
-			int bound = Math.max(1, 34 - age);
-			potential = Math.min(99, rating - 5 + rand.nextInt(bound));
-		}
-
-		// Ensure potential is at least as high as rating
-		potential = Math.max(potential, rating);
-		return potential;
-	}
-
 	/**
 	 * Auto-assigns the best players to a lineup based on formation. Returns a map
 	 * of slotIndex -> playerId.
@@ -733,16 +701,6 @@ public class RepositoryService {
 		return lineupRepository.findByTeamId(teamId);
 	}
 
-	// Stadium management
-	public List<StadiumPart> getStadiumParts(Long teamId) {
-		return stadiumPartRepository.findByTeamId(teamId);
-	}
-
-	@Transactional
-	public StadiumPart saveStadiumPart(StadiumPart part) {
-		return stadiumPartRepository.save(part);
-	}
-
 	// GameState management
 	public String getGameState(Long teamId) {
 		return gameStateRepository.findById(teamId).map(GameState::getJson).orElse(null);
@@ -756,8 +714,9 @@ public class RepositoryService {
 	}
 
 	/**
-	 * Initialisiert die 7 Standard-Ligen mit CPU-Teams: - 1 x 1. Liga (12 Teams) -
-	 * 2 x 2. Liga (je 12 Teams) - 4 x 3. Liga (je 12 Teams)
+	 * Initialisiert die 7 Standard-Ligen für Deutschland und Spanien mit CPU-Teams:
+	 * - 1 x 1. Liga (12 Teams) - 2 x 2. Liga (je 12 Teams) - 4 x 3. Liga (je 12
+	 * Teams)
 	 */
 	@Transactional
 	public void initializeLigues() {
@@ -767,27 +726,46 @@ public class RepositoryService {
 			return;
 		}
 
-		// 1. Liga
-		createLeagueWithCPUTeams(1, "1. Liga", "1. Liga", 12);
+		// DEUTSCHLAND - 7 Ligen
+		System.out.println("[RepositoryService] Initialisiere Ligen für Deutschland...");
+		createLeaguesForCountry("Deutschland");
 
-		// 2. Ligen
-		createLeagueWithCPUTeams(2, "2. Liga A", "2. Liga A", 12);
-		createLeagueWithCPUTeams(2, "2. Liga B", "2. Liga B", 12);
+		// SPANIEN - 7 Ligen
+		System.out.println("[RepositoryService] Initialisiere Ligen für Spanien...");
+		createLeaguesForCountry("Spanien");
 
-		// 3. Ligen
-		createLeagueWithCPUTeams(3, "3. Liga A", "3. Liga A", 12);
-		createLeagueWithCPUTeams(3, "3. Liga B", "3. Liga B", 12);
-		createLeagueWithCPUTeams(3, "3. Liga C", "3. Liga C", 12);
-		createLeagueWithCPUTeams(3, "3. Liga D", "3. Liga D", 12);
-
-		System.out.println("[RepositoryService] 7 Ligen mit insgesamt 84 CPU-Teams initialisiert");
+		System.out
+				.println("[RepositoryService] 14 Ligen (2 Länder x 7 Ligen) mit insgesamt 168 CPU-Teams initialisiert");
 	}
 
 	/**
-	 * Erstellt eine Liga mit den angegebenen CPU-Teams
+	 * Erstellt 7 Ligen (1. Liga, 2. Liga A/B, 3. Liga A/B/C/D) für ein bestimmtes
+	 * Land
 	 */
-	private void createLeagueWithCPUTeams(int division, String name, String divisionLabel, int numTeams) {
+	private void createLeaguesForCountry(String country) {
+		// 1. Liga
+		createLeagueWithCPUTeams(country, 1, "1. Liga", "1. Liga", 12);
+
+		// 2. Ligen
+		createLeagueWithCPUTeams(country, 2, "2. Liga A", "2. Liga A", 12);
+		createLeagueWithCPUTeams(country, 2, "2. Liga B", "2. Liga B", 12);
+
+		// 3. Ligen
+		createLeagueWithCPUTeams(country, 3, "3. Liga A", "3. Liga A", 12);
+		createLeagueWithCPUTeams(country, 3, "3. Liga B", "3. Liga B", 12);
+		createLeagueWithCPUTeams(country, 3, "3. Liga C", "3. Liga C", 12);
+		createLeagueWithCPUTeams(country, 3, "3. Liga D", "3. Liga D", 12);
+
+		System.out.println("[RepositoryService] 7 Ligen für " + country + " mit 84 CPU-Teams erstellt");
+	}
+
+	/**
+	 * Erstellt eine Liga mit den angegebenen CPU-Teams für ein bestimmtes Land
+	 */
+	private void createLeagueWithCPUTeams(String country, int division, String name, String divisionLabel,
+			int numTeams) {
 		League league = new League(name);
+		league.setCountry(country);
 		league.setDivision(division);
 		league.setDivisionLabel(divisionLabel);
 		leagueRepository.save(league);
@@ -827,53 +805,85 @@ public class RepositoryService {
 
 	/**
 	 * Initialisiert die Spieler für ein Team mit divisions-abhängigen Stärken 1.
-	 * Liga: 60-95 2. Liga: 55-80 3. Liga: 50-73
+	 * Liga: 70-90 2. Liga: 60-80 3. Liga: 50-70
+	 * 
+	 * Generiert auch 2 zufällige Starspieler mit +5 Bonus zu allen Stats
 	 */
 	private void initializeTeamPlayers(Team team, int division) {
 		String[] positions = { "GK", "GK", "DEF", "DEF", "DEF", "DEF", "DEF", "DEF", "MID", "MID", "MID", "MID", "MID",
 				"MID", "MID", "FWD", "FWD", "FWD" };
 
-		// Bestimme Stärke-Range basierend auf Division
-		int minRating, maxRating;
-		switch (division) {
-		case 1:
-			minRating = 60;
-			maxRating = 95;
-			break;
-		case 2:
-			minRating = 55;
-			maxRating = 80;
-			break;
-		case 3:
-			minRating = 50;
-			maxRating = 73;
-			break;
-		default:
-			minRating = 50;
-			maxRating = 73;
-			break;
-		}
-
 		Random rand = new Random();
+		List<Player> createdPlayers = new ArrayList<>();
+
 		for (int i = 0; i < 18; i++) {
 			String[] playerData = PlayerNameGenerator.generatePlayerNameAndCountry();
-			int rating = minRating + rand.nextInt(maxRating - minRating + 1);
-			int age = 18 + rand.nextInt(17);
-			int potential = generatePotential(rating, age);
 
-			Player p = new Player(playerData[0], rating, potential, (int) (Math.random() * 20) - 10, positions[i],
-					playerData[1]);
+			Player p = new Player(playerData[0], 0, 0, (int) (Math.random() * 20) - 10, positions[i], playerData[1]);
 
-			long salary = 50000L + (long) rating * rating * 100;
-			long contractYears = 1 + rand.nextInt(5);
-			long contractEndDate = System.currentTimeMillis() + (contractYears * 30L * 24L * 60L * 60L * 1000L);
+			// Initialisiere alle Fähigkeiten nach Division
+			p.initializeSkillsForDivision(division, rand);
+
+			int age = 18 + rand.nextInt(17); // Age 18-34
+			long baseSalary = (long) (Math.pow(p.getRating(), 2.5) * 1.2);
+			long salary = (baseSalary * age / 10) / 30; // Pro-Spiel Gehalt
+			int contractLength = 1 + rand.nextInt(3); // Contract 1-3 seasons (random)
 
 			p.setAge(age);
 			p.setSalary(salary);
-			p.setContractEndDate(contractEndDate);
+			p.setContractLength(contractLength);
 			p.setTeamId(team.getId());
 			p.calculateMarketValue();
 			playerRepository.save(p);
+			createdPlayers.add(p);
+		}
+
+		// Modifiziere 2 Spieler als "bessere" (+7 Rating) und 2 als "schlechtere" (-7
+		// Rating)
+		if (createdPlayers.size() >= 4) {
+			// 2 bessere Spieler (+7 Rating)
+			int better1Index = rand.nextInt(createdPlayers.size());
+			int better2Index;
+			do {
+				better2Index = rand.nextInt(createdPlayers.size());
+			} while (better2Index == better1Index);
+
+			Player better1 = createdPlayers.get(better1Index);
+			Player better2 = createdPlayers.get(better2Index);
+
+			better1.setRating(Math.min(100, better1.getRating() + 7));
+			better2.setRating(Math.min(100, better2.getRating() + 7));
+			better1.calculateMarketValue();
+			better2.calculateMarketValue();
+			playerRepository.save(better1);
+			playerRepository.save(better2);
+
+			System.out.println("[RepositoryService] Spieler " + better1.getName() + " und " + better2.getName()
+					+ " erhalten +7 Rating Boost");
+
+			// 2 schlechtere Spieler (-7 Rating)
+			int worse1Index;
+			int worse2Index;
+			do {
+				worse1Index = rand.nextInt(createdPlayers.size());
+			} while (worse1Index == better1Index || worse1Index == better2Index);
+
+			do {
+				worse2Index = rand.nextInt(createdPlayers.size());
+			} while (worse2Index == better1Index || worse2Index == better2Index || worse2Index == worse1Index);
+
+			Player worse1 = createdPlayers.get(worse1Index);
+			Player worse2 = createdPlayers.get(worse2Index);
+
+			worse1.setRating(Math.max(1, worse1.getRating() - 7));
+			worse2.setRating(Math.max(1, worse2.getRating() - 7));
+			worse1.calculateMarketValue();
+			worse2.calculateMarketValue();
+			playerRepository.save(worse1);
+			playerRepository.save(worse2);
+
+			System.out.println("[RepositoryService] Spieler " + worse1.getName() + " und " + worse2.getName()
+					+ " erhalten -7 Rating Malus");
 		}
 	}
 
@@ -889,10 +899,8 @@ public class RepositoryService {
 	 * Initialisiert die Stadionteile für ein Team
 	 */
 	private void initializeTeamStadium(Team team) {
-		for (int i = 0; i < 30; i++) {
-			StadiumPart part = new StadiumPart(team.getId(), i, false, null);
-			stadiumPartRepository.save(part);
-		}
+		// Stadium initialization is now handled by StadiumBuild system
+		// No longer needed for new teams
 	}
 
 	/**
@@ -949,6 +957,31 @@ public class RepositoryService {
 		TeamDetailsDTO dto = new TeamDetailsDTO(teamId, team.getName(), playersInLineup, allPlayers.size(),
 				teamStrength);
 
+		// Calculate stadium capacity from completed StadiumBuilds
+		// Start with base capacity of 1000 (1 part)
+		int stadiumCapacity = 1000;
+
+		// Add capacity from all completed builds
+		List<com.example.manager.model.StadiumBuild> completedBuilds = stadiumBuildRepository
+				.findByTeamIdAndCompletedTrue(teamId);
+		for (com.example.manager.model.StadiumBuild build : completedBuilds) {
+			stadiumCapacity += build.getTotalSeats();
+		}
+
+		dto.setStadiumCapacity(stadiumCapacity);
+
+		// Find league info for this team
+		List<League> allLeagues = leagueRepository.findAll();
+		for (League league : allLeagues) {
+			for (LeagueSlot slot : league.getSlots()) {
+				if (slot.getTeamId() != null && slot.getTeamId().equals(teamId)) {
+					dto.setLeagueName(league.getName());
+					dto.setCountry(league.getCountry());
+					break;
+				}
+			}
+		}
+
 		// Add lineup players
 		for (LineupSlot slot : lineup) {
 			if (slot.getPlayerId() != null) {
@@ -959,6 +992,13 @@ public class RepositoryService {
 					dto.getLineup().add(playerDto);
 				}
 			}
+		}
+
+		// Add all players
+		for (Player p : allPlayers) {
+			PlayerLineupDTO playerDto = new PlayerLineupDTO(p.getId(), p.getName(), p.getPosition(), p.getRating(),
+					p.getAge(), p.getCountry());
+			dto.getAllPlayers().add(playerDto);
 		}
 
 		return dto;
@@ -976,12 +1016,66 @@ public class RepositoryService {
 			int filledSlots = league.getFilledSlots();
 			int totalSlots = league.getSlots().size();
 
-			LeagueInfoDTO dto = new LeagueInfoDTO(league.getId(), league.getName(), league.getDivision(),
-					league.getDivisionLabel(), filledSlots, totalSlots);
+			LeagueInfoDTO dto = new LeagueInfoDTO(league.getId(), league.getName(), league.getCountry(),
+					league.getDivision(), league.getDivisionLabel(), filledSlots, totalSlots);
 			result.add(dto);
 		}
 
-		// Sortiere nach Division, dann nach Name
+		// Sortiere nach Land, dann Division, dann Name
+		result.sort((a, b) -> {
+			// Erst nach Land sortieren
+			int countryCompare = a.getCountry().compareTo(b.getCountry());
+			if (countryCompare != 0) {
+				return countryCompare;
+			}
+			// Dann nach Division
+			if (a.getDivision() != b.getDivision()) {
+				return Integer.compare(a.getDivision(), b.getDivision());
+			}
+			// Dann nach Name
+			return a.getDivisionLabel().compareTo(b.getDivisionLabel());
+		});
+
+		return result;
+	}
+
+	/**
+	 * Gibt alle verfügbaren Länder zurück
+	 */
+	public List<String> getAvailableCountries() {
+		List<League> leagues = leagueRepository.findAll();
+		List<String> countries = new ArrayList<>();
+
+		for (League league : leagues) {
+			if (league.getCountry() != null && !countries.contains(league.getCountry())) {
+				countries.add(league.getCountry());
+			}
+		}
+
+		// Alphabetisch sortieren
+		countries.sort(String::compareTo);
+		return countries;
+	}
+
+	/**
+	 * Gibt alle Ligen für ein bestimmtes Land zurück
+	 */
+	public List<LeagueInfoDTO> getLeaguesByCountry(String country) {
+		List<League> leagues = leagueRepository.findAll();
+		List<LeagueInfoDTO> result = new ArrayList<>();
+
+		for (League league : leagues) {
+			if (country.equals(league.getCountry())) {
+				int filledSlots = league.getFilledSlots();
+				int totalSlots = league.getSlots().size();
+
+				LeagueInfoDTO dto = new LeagueInfoDTO(league.getId(), league.getName(), league.getCountry(),
+						league.getDivision(), league.getDivisionLabel(), filledSlots, totalSlots);
+				result.add(dto);
+			}
+		}
+
+		// Sortiere nach Division, dann Name
 		result.sort((a, b) -> {
 			if (a.getDivision() != b.getDivision()) {
 				return Integer.compare(a.getDivision(), b.getDivision());
@@ -1220,6 +1314,30 @@ public class RepositoryService {
 		// Generate goal events
 		generateGoalEvents(matchId, homeTeamId, awayTeamId, homeGoals, awayGoals);
 
+		// Process sponsor payouts for both teams
+		processSponsorPayouts(homeTeamId, result.equals("home"));
+		processSponsorPayouts(awayTeamId, result.equals("away"));
+
+		// Deduct player salaries for both teams
+		deductPlayerSalaries(homeTeamId);
+		deductPlayerSalaries(awayTeamId);
+
+		// Train players from both teams who were in the lineup
+		Team homeTeamForTraining = teamRepository.findById(homeTeamId).orElse(null);
+		Team awayTeamForTraining = teamRepository.findById(awayTeamId).orElse(null);
+		String homeFormationForTraining = (homeTeamForTraining != null
+				&& homeTeamForTraining.getActiveFormation() != null) ? homeTeamForTraining.getActiveFormation()
+						: "4-4-2";
+		String awayFormationForTraining = (awayTeamForTraining != null
+				&& awayTeamForTraining.getActiveFormation() != null) ? awayTeamForTraining.getActiveFormation()
+						: "4-4-2";
+		trainPlayersAfterMatch(homeTeamId, homeFormationForTraining);
+		trainPlayersAfterMatch(awayTeamId, awayFormationForTraining);
+
+		// Trainiere Akademie-Spieler beider Teams nach dem Spieltag
+		trainAcademyPlayers(homeTeamId);
+		trainAcademyPlayers(awayTeamId);
+
 		// Get team names
 		Team homeTeam = teamRepository.findById(homeTeamId).orElse(null);
 		Team awayTeam = teamRepository.findById(awayTeamId).orElse(null);
@@ -1231,14 +1349,161 @@ public class RepositoryService {
 	}
 
 	/**
+	 * Trainiert alle Spieler eines Teams, die in der Aufstellung waren Jede
+	 * Fähigkeit hat 10% Chance um 1 zu wachsen (wenn unter dem Potential)
+	 */
+	private void trainPlayersAfterMatch(Long teamId, String formationId) {
+		try {
+			// Lade die aktuelle Aufstellung des Teams mit der angegebenen Formation
+			List<LineupSlot> lineup = lineupRepository.findByTeamIdAndFormationId(teamId, formationId);
+
+			Random rand = new Random();
+			int trainedCount = 0;
+			int skillsImproved = 0;
+
+			for (LineupSlot slot : lineup) {
+				if (slot.getPlayerId() != null) {
+					Player player = playerRepository.findById(slot.getPlayerId()).orElse(null);
+					if (player != null) {
+						// Zähle verbesserte Skills vor Training
+						int skillsBefore = getSkillCount(player);
+
+						// Trainiere den Spieler
+						player.trainAfterMatch(rand);
+
+						// Zähle verbesserte Skills nach Training
+						int skillsAfter = getSkillCount(player);
+
+						// Speichere den trainierten Spieler
+						playerRepository.save(player);
+
+						trainedCount++;
+						skillsImproved += (skillsAfter - skillsBefore);
+					}
+				}
+			}
+
+			if (trainedCount > 0) {
+				System.out.println("[Training] Team " + teamId + ": " + trainedCount + " Spieler trainiert, "
+						+ skillsImproved + " Skills verbessert");
+			}
+		} catch (Exception e) {
+			System.err.println("[Training] Fehler beim Training für Team " + teamId + ": " + e.getMessage());
+		}
+	}
+
+	/**
+	 * Zählt die Summe aller Skills eines Spielers
+	 */
+	private int getSkillCount(Player player) {
+		return player.getPace() + player.getDribbling() + player.getBallControl() + player.getShooting()
+				+ player.getTackling() + player.getSliding() + player.getHeading() + player.getCrossing()
+				+ player.getPassing() + player.getAwareness() + player.getJumping() + player.getStamina()
+				+ player.getStrength();
+	}
+
+	/**
+	 * Verarbeitet Sponsorenzahlungen nach einem Spiel - Antritt (appearance): Wird
+	 * immer gezahlt - Sieg (win): Wird nur bei Sieg gezahlt
+	 */
+	private void processSponsorPayouts(Long teamId, boolean won) {
+		try {
+			com.example.manager.model.Sponsor sponsor = sponsorRepository.findByTeamId(teamId).orElse(null);
+			if (sponsor == null) {
+				return; // Kein Sponsor für dieses Team
+			}
+
+			Team team = teamRepository.findById(teamId).orElse(null);
+			if (team == null) {
+				return;
+			}
+
+			// Antritt-Zahlung (immer)
+			if (sponsor.getAppearancePayout() > 0) {
+				team.setBudget(team.getBudgetAsLong() + sponsor.getAppearancePayout());
+
+				// Save as transaction
+				Transaction transaction = new Transaction(teamId, Long.valueOf(sponsor.getAppearancePayout()), "income",
+						"Sponsor-Antritt (" + sponsor.getName() + ")", "sponsors");
+				transactionRepository.save(transaction);
+
+				System.out.println("[Sponsor] Team " + team.getName() + " erhält " + sponsor.getAppearancePayout()
+						+ "€ Antritt von " + sponsor.getName());
+			}
+
+			// Sieg-Zahlung (nur bei Sieg)
+			if (won && sponsor.getWinPayout() > 0) {
+				team.setBudget(team.getBudgetAsLong() + sponsor.getWinPayout());
+
+				// Save as transaction
+				Transaction transaction = new Transaction(teamId, Long.valueOf(sponsor.getWinPayout()), "income",
+						"Sponsor-Sieg (" + sponsor.getName() + ")", "sponsors");
+				transactionRepository.save(transaction);
+
+				System.out.println("[Sponsor] Team " + team.getName() + " erhält " + sponsor.getWinPayout()
+						+ "€ Siegprämie von " + sponsor.getName());
+			}
+
+			teamRepository.save(team);
+		} catch (Exception e) {
+			System.err.println("[Sponsor] Fehler bei Sponsorenzahlung für Team " + teamId + ": " + e.getMessage());
+		}
+	}
+
+	/**
+	 * Zieht Spielergehälter (pro Spiel) für alle Kaderspieler ab
+	 */
+	private void deductPlayerSalaries(Long teamId) {
+		try {
+			Team team = teamRepository.findById(teamId).orElse(null);
+			if (team == null) {
+				return;
+			}
+
+			List<Player> squadPlayers = playerRepository.findByTeamId(teamId);
+			long totalSalaries = 0;
+
+			for (Player player : squadPlayers) {
+				totalSalaries += player.getSalary();
+			}
+
+			if (totalSalaries > 0) {
+				team.setBudget(team.getBudgetAsLong() - totalSalaries);
+				teamRepository.save(team);
+
+				// Save as transaction
+				Transaction transaction = new Transaction(teamId, -totalSalaries, "expense",
+						"Spielergehälter (" + squadPlayers.size() + " Spieler)", "salaries");
+				transactionRepository.save(transaction);
+
+				System.out.println("[Salaries] Team " + team.getName() + " zahlt " + totalSalaries
+						+ "€ Spielergehälter für " + squadPlayers.size() + " Spieler");
+			}
+		} catch (Exception e) {
+			System.err.println(
+					"[Salaries] Fehler beim Abzug der Spielergehälter für Team " + teamId + ": " + e.getMessage());
+		}
+	}
+
+	/**
 	 * Generiert Goal Events für den Spielbericht
 	 */
 	private void generateGoalEvents(Long matchId, Long homeTeamId, Long awayTeamId, int homeGoals, int awayGoals) {
 		// Lösche alte Events
 		matchEventRepository.deleteByMatchId(matchId);
 
-		List<LineupSlot> homeLineup = lineupRepository.findByTeamIdAndFormationId(homeTeamId, "4-4-2");
-		List<LineupSlot> awayLineup = lineupRepository.findByTeamIdAndFormationId(awayTeamId, "4-4-2");
+		// Lade die aktiven Formationen der Teams
+		Team homeTeam = teamRepository.findById(homeTeamId).orElse(null);
+		Team awayTeam = teamRepository.findById(awayTeamId).orElse(null);
+		String homeFormation = (homeTeam != null && homeTeam.getActiveFormation() != null)
+				? homeTeam.getActiveFormation()
+				: "4-4-2";
+		String awayFormation = (awayTeam != null && awayTeam.getActiveFormation() != null)
+				? awayTeam.getActiveFormation()
+				: "4-4-2";
+
+		List<LineupSlot> homeLineup = lineupRepository.findByTeamIdAndFormationId(homeTeamId, homeFormation);
+		List<LineupSlot> awayLineup = lineupRepository.findByTeamIdAndFormationId(awayTeamId, awayFormation);
 
 		List<Player> homePlayers = new ArrayList<>();
 		List<Player> awayPlayers = new ArrayList<>();
@@ -1842,6 +2107,47 @@ public class RepositoryService {
 		}
 		result.put("simulatedMatches", totalSimulated);
 
+		// Simuliere Cup-Spiele wenn es ein Cup-Spieltag ist (alle 3 Spieltage: 3, 6, 9,
+		// 12, 15, 18, 21)
+		if (currentMatchday % 3 == 0 && currentMatchday <= 21) {
+			System.out.println("[RepositoryService] 🏆 Cup Spieltag " + currentMatchday + " - Simuliere Cup-Spiele");
+			int cupRound = currentMatchday / 3; // Runde 1-7
+			try {
+				// Finde alle Cup-Turniere (für alle Länder) die aktuell aktiv sind
+				List<CupTournament> activeCups = cupTournamentRepository.findByStatus("active");
+
+				if (activeCups.isEmpty()) {
+					System.out.println("[RepositoryService] ⚠️ Keine aktiven Cup-Turniere gefunden!");
+				} else {
+					System.out.println("[RepositoryService] 🏆 Gefundene Cup-Turniere: " + activeCups.size());
+					for (CupTournament tournament : activeCups) {
+						System.out.println("[RepositoryService] 🏆 - " + tournament.getCountry() + " (Runde: "
+								+ tournament.getCurrentRound() + ", Status: " + tournament.getStatus() + ")");
+
+						// Wenn Cup-Runde noch nicht generiert wurde, generiere sie jetzt
+						if (tournament.getCurrentRound() < cupRound) {
+							System.out.println("[RepositoryService] 🏆 Generiere " + tournament.getCountry()
+									+ " Cup Runde " + cupRound);
+							cupService.generateCupRound(tournament, cupRound);
+						}
+
+						// Simuliere die Runde wenn sie matchday-ready ist
+						if (tournament.getCurrentRound() == cupRound) {
+							System.out.println("[RepositoryService] 🏆 Simuliere " + tournament.getCountry()
+									+ " Cup Runde " + cupRound);
+							cupService.completeCupRound(tournament, cupRound);
+						} else {
+							System.out.println("[RepositoryService] ⚠️ Cup-Runde mismatch: " + tournament.getCountry()
+									+ " ist in Runde " + tournament.getCurrentRound() + ", nicht " + cupRound);
+						}
+					}
+				}
+			} catch (Exception e) {
+				System.err.println("[RepositoryService] Fehler bei Cup-Simulation: " + e.getMessage());
+				e.printStackTrace();
+			}
+		}
+
 		// Erhöhe Spieltag
 		GameStateTracking tracking = getOrCreateGameStateTracking();
 		int nextMatchday = Math.min(25, currentMatchday + 1);
@@ -1934,31 +2240,120 @@ public class RepositoryService {
 	}
 
 	/**
-	 * Führt Saison-Reset mit Auf- und Abstieg durch!
-	 * GARANTIERT: Kein Team geht verloren, alle Ligen haben danach 12 Teams!
+	 * Verarbeitet Saison-Ende Boni und entfernt Sponsoren - Klassenerhalt-Bonus für
+	 * Platz 1-8 - Titel-Bonus für Platz 1-2 - Entfernt alle Sponsoren
+	 */
+	@Transactional
+	private void processSeasonEndBonuses() {
+		System.out.println("[RepositoryService] 💰 Verarbeite Saison-Ende Boni...");
+
+		List<League> allLeagues = leagueRepository.findAll();
+
+		for (League league : allLeagues) {
+			List<LeagueStandingsDTO> standings = getLeagueStandingsByLeagueId(league.getId());
+
+			for (LeagueStandingsDTO standing : standings) {
+				Long teamId = standing.getTeamId();
+				int position = standing.getPosition();
+
+				Team team = teamRepository.findById(teamId).orElse(null);
+				if (team == null) {
+					continue;
+				}
+
+				// Prüfe ob Team einen Sponsor hat
+				com.example.manager.model.Sponsor sponsor = sponsorRepository.findByTeamId(teamId).orElse(null);
+
+				// Klassenerhalt-Bonus (Platz 1-8)
+				if (position >= 1 && position <= 8 && sponsor != null && sponsor.getSurvivePayout() > 0) {
+					team.setBudget(team.getBudgetAsLong() + sponsor.getSurvivePayout());
+					System.out.println("[Sponsor] Team " + team.getName() + " (Platz " + position + ") erhält "
+							+ sponsor.getSurvivePayout() + "€ Klassenerhalt von " + sponsor.getName());
+				}
+
+				// Titel-Bonus (Platz 1-2)
+				if (position >= 1 && position <= 2 && sponsor != null && sponsor.getTitlePayout() > 0) {
+					team.setBudget(team.getBudgetAsLong() + sponsor.getTitlePayout());
+					System.out.println("[Sponsor] Team " + team.getName() + " (Platz " + position + ") erhält "
+							+ sponsor.getTitlePayout() + "€ Titelprämie von " + sponsor.getName());
+				}
+
+				teamRepository.save(team);
+
+				// Entferne Sponsor
+				if (sponsor != null) {
+					sponsorRepository.delete(sponsor);
+					System.out.println(
+							"[Sponsor] Sponsor " + sponsor.getName() + " von Team " + team.getName() + " entfernt");
+				}
+			}
+		}
+
+		System.out.println("[RepositoryService] ✅ Saison-Ende Boni verarbeitet und Sponsoren entfernt");
+	}
+
+	/**
+	 * Führt Saison-Reset mit Auf- und Abstieg durch! GARANTIERT: Kein Team geht
+	 * verloren, alle Ligen haben danach 12 Teams! Jetzt mit Länder-Unterstützung:
+	 * Auf-/Abstieg nur innerhalb eines Landes!
 	 */
 	@Transactional
 	private void resetSeasonWithPromotion() {
 		System.out.println("[RepositoryService] 🏆 Starte Saison-Reset mit Auf- und Abstieg...");
-		
+
+		// === SCHRITT 1: Altern aller Spieler und Karriereeenden ===
+		// Rufe endSeason() für alle Teams auf
+		endSeason();
+		System.out.println("[RepositoryService] ✅ Alle Teams haben Saison-Ende verarbeitet");
+
+		// === SPONSOR & BONUSZAHLUNGEN ===
+		// 1. Entferne alle Sponsoren
+		// 2. Zahle Saison-Ende Boni (Klassenerhalt und Titel)
+		processSeasonEndBonuses();
+
 		List<League> allLeagues = leagueRepository.findAll();
-		
+
+		// Gruppiere Ligen nach Land
+		Map<String, List<League>> leaguesByCountry = new HashMap<>();
+		for (League league : allLeagues) {
+			String country = league.getCountry() != null ? league.getCountry() : "Unknown";
+			leaguesByCountry.putIfAbsent(country, new ArrayList<>());
+			leaguesByCountry.get(country).add(league);
+		}
+
+		// Führe Auf-/Abstieg für jedes Land separat durch
+		for (Map.Entry<String, List<League>> entry : leaguesByCountry.entrySet()) {
+			String country = entry.getKey();
+			List<League> countryLeagues = entry.getValue();
+			System.out.println("[RepositoryService] Führe Auf-/Abstieg für " + country + " durch ("
+					+ countryLeagues.size() + " Ligen)...");
+			resetSeasonForCountry(country, countryLeagues);
+		}
+
+		System.out.println("[RepositoryService] ✅ Saison-Reset abgeschlossen für alle Länder!");
+	}
+
+	/**
+	 * Führt Auf-/Abstieg für ein spezifisches Land durch
+	 */
+	private void resetSeasonForCountry(String country, List<League> leagues) {
 		// === SCHRITT 1: Sammle ALLE Teams sortiert nach Liga ===
 		Map<String, List<Long>> teamsByLeague = new HashMap<>();
-		
-		for (League league : allLeagues) {
+
+		for (League league : leagues) {
 			List<LeagueStandingsDTO> standings = getLeagueStandingsByLeagueId(league.getId());
 			List<Long> teamIds = new ArrayList<>();
 			for (LeagueStandingsDTO team : standings) {
 				teamIds.add(team.getTeamId());
 			}
 			teamsByLeague.put(league.getName(), teamIds);
-			System.out.println("[RepositoryService] " + league.getName() + " hat " + teamIds.size() + " Teams");
+			System.out.println(
+					"[RepositoryService] " + country + " - " + league.getName() + " hat " + teamIds.size() + " Teams");
 		}
-		
+
 		// === SCHRITT 2: Berechne neue Team-Verteilung für jede Liga ===
 		Map<String, List<Long>> newTeamsByLeague = new HashMap<>();
-		
+
 		List<Long> liga1 = teamsByLeague.getOrDefault("1. Liga", new ArrayList<>());
 		List<Long> liga2A = teamsByLeague.getOrDefault("2. Liga A", new ArrayList<>());
 		List<Long> liga2B = teamsByLeague.getOrDefault("2. Liga B", new ArrayList<>());
@@ -1966,76 +2361,97 @@ public class RepositoryService {
 		List<Long> liga3B = teamsByLeague.getOrDefault("3. Liga B", new ArrayList<>());
 		List<Long> liga3C = teamsByLeague.getOrDefault("3. Liga C", new ArrayList<>());
 		List<Long> liga3D = teamsByLeague.getOrDefault("3. Liga D", new ArrayList<>());
-		
+
 		// NEUE LIGA 1: Top 8 von Liga 1 + Top 2 von Liga 2A + Top 2 von Liga 2B
 		List<Long> newLiga1 = new ArrayList<>();
-		for (int i = 0; i < Math.min(8, liga1.size()); i++) newLiga1.add(liga1.get(i));
-		for (int i = 0; i < Math.min(2, liga2A.size()); i++) newLiga1.add(liga2A.get(i));
-		for (int i = 0; i < Math.min(2, liga2B.size()); i++) newLiga1.add(liga2B.get(i));
+		for (int i = 0; i < Math.min(8, liga1.size()); i++)
+			newLiga1.add(liga1.get(i));
+		for (int i = 0; i < Math.min(2, liga2A.size()); i++)
+			newLiga1.add(liga2A.get(i));
+		for (int i = 0; i < Math.min(2, liga2B.size()); i++)
+			newLiga1.add(liga2B.get(i));
 		newTeamsByLeague.put("1. Liga", newLiga1);
-		
-		// NEUE LIGA 2A: Platz 3-8 von Liga 2A + Platz 9-10 von Liga 1 + Top 2 von Liga 3A + Top 2 von Liga 3B
+
+		// NEUE LIGA 2A: Platz 3-8 von Liga 2A + Platz 9-10 von Liga 1 + Top 2 von Liga
+		// 3A + Top 2 von Liga 3B
 		List<Long> newLiga2A = new ArrayList<>();
-		for (int i = 2; i < Math.min(8, liga2A.size()); i++) newLiga2A.add(liga2A.get(i));
-		for (int i = 8; i < Math.min(10, liga1.size()); i++) newLiga2A.add(liga1.get(i));
-		for (int i = 0; i < Math.min(2, liga3A.size()); i++) newLiga2A.add(liga3A.get(i));
-		for (int i = 0; i < Math.min(2, liga3B.size()); i++) newLiga2A.add(liga3B.get(i));
+		for (int i = 2; i < Math.min(8, liga2A.size()); i++)
+			newLiga2A.add(liga2A.get(i));
+		for (int i = 8; i < Math.min(10, liga1.size()); i++)
+			newLiga2A.add(liga1.get(i));
+		for (int i = 0; i < Math.min(2, liga3A.size()); i++)
+			newLiga2A.add(liga3A.get(i));
+		for (int i = 0; i < Math.min(2, liga3B.size()); i++)
+			newLiga2A.add(liga3B.get(i));
 		newTeamsByLeague.put("2. Liga A", newLiga2A);
-		
-		// NEUE LIGA 2B: Platz 3-8 von Liga 2B + Platz 11-12 von Liga 1 + Top 2 von Liga 3C + Top 2 von Liga 3D
+
+		// NEUE LIGA 2B: Platz 3-8 von Liga 2B + Platz 11-12 von Liga 1 + Top 2 von Liga
+		// 3C + Top 2 von Liga 3D
 		List<Long> newLiga2B = new ArrayList<>();
-		for (int i = 2; i < Math.min(8, liga2B.size()); i++) newLiga2B.add(liga2B.get(i));
-		for (int i = 10; i < Math.min(12, liga1.size()); i++) newLiga2B.add(liga1.get(i));
-		for (int i = 0; i < Math.min(2, liga3C.size()); i++) newLiga2B.add(liga3C.get(i));
-		for (int i = 0; i < Math.min(2, liga3D.size()); i++) newLiga2B.add(liga3D.get(i));
+		for (int i = 2; i < Math.min(8, liga2B.size()); i++)
+			newLiga2B.add(liga2B.get(i));
+		for (int i = 10; i < Math.min(12, liga1.size()); i++)
+			newLiga2B.add(liga1.get(i));
+		for (int i = 0; i < Math.min(2, liga3C.size()); i++)
+			newLiga2B.add(liga3C.get(i));
+		for (int i = 0; i < Math.min(2, liga3D.size()); i++)
+			newLiga2B.add(liga3D.get(i));
 		newTeamsByLeague.put("2. Liga B", newLiga2B);
-		
+
 		// NEUE LIGA 3A: Platz 3-12 von Liga 3A (alle bleiben) + Platz 9-10 von Liga 2A
 		List<Long> newLiga3A = new ArrayList<>();
-		for (int i = 2; i < liga3A.size(); i++) newLiga3A.add(liga3A.get(i));
-		for (int i = 8; i < Math.min(10, liga2A.size()); i++) newLiga3A.add(liga2A.get(i));
+		for (int i = 2; i < liga3A.size(); i++)
+			newLiga3A.add(liga3A.get(i));
+		for (int i = 8; i < Math.min(10, liga2A.size()); i++)
+			newLiga3A.add(liga2A.get(i));
 		newTeamsByLeague.put("3. Liga A", newLiga3A);
-		
+
 		// NEUE LIGA 3B: Platz 3-12 von Liga 3B (alle bleiben) + Platz 11-12 von Liga 2A
 		List<Long> newLiga3B = new ArrayList<>();
-		for (int i = 2; i < liga3B.size(); i++) newLiga3B.add(liga3B.get(i));
-		for (int i = 10; i < Math.min(12, liga2A.size()); i++) newLiga3B.add(liga2A.get(i));
+		for (int i = 2; i < liga3B.size(); i++)
+			newLiga3B.add(liga3B.get(i));
+		for (int i = 10; i < Math.min(12, liga2A.size()); i++)
+			newLiga3B.add(liga2A.get(i));
 		newTeamsByLeague.put("3. Liga B", newLiga3B);
-		
+
 		// NEUE LIGA 3C: Platz 3-12 von Liga 3C (alle bleiben) + Platz 9-10 von Liga 2B
 		List<Long> newLiga3C = new ArrayList<>();
-		for (int i = 2; i < liga3C.size(); i++) newLiga3C.add(liga3C.get(i));
-		for (int i = 8; i < Math.min(10, liga2B.size()); i++) newLiga3C.add(liga2B.get(i));
+		for (int i = 2; i < liga3C.size(); i++)
+			newLiga3C.add(liga3C.get(i));
+		for (int i = 8; i < Math.min(10, liga2B.size()); i++)
+			newLiga3C.add(liga2B.get(i));
 		newTeamsByLeague.put("3. Liga C", newLiga3C);
-		
+
 		// NEUE LIGA 3D: Platz 3-12 von Liga 3D (alle bleiben) + Platz 11-12 von Liga 2B
 		List<Long> newLiga3D = new ArrayList<>();
-		for (int i = 2; i < liga3D.size(); i++) newLiga3D.add(liga3D.get(i));
-		for (int i = 10; i < Math.min(12, liga2B.size()); i++) newLiga3D.add(liga2B.get(i));
+		for (int i = 2; i < liga3D.size(); i++)
+			newLiga3D.add(liga3D.get(i));
+		for (int i = 10; i < Math.min(12, liga2B.size()); i++)
+			newLiga3D.add(liga2B.get(i));
 		newTeamsByLeague.put("3. Liga D", newLiga3D);
-		
+
 		// Debug
 		for (Map.Entry<String, List<Long>> entry : newTeamsByLeague.entrySet()) {
-			System.out.println("[RepositoryService] " + entry.getKey() + " → " + entry.getValue().size() + " Teams");
+			System.out.println("[RepositoryService] " + country + " - " + entry.getKey() + " → "
+					+ entry.getValue().size() + " Teams");
 		}
-		
+
 		// === SCHRITT 3: Weise Teams zu Ligen zu ===
-		for (League league : allLeagues) {
+		for (League league : leagues) {
 			List<Long> newTeams = newTeamsByLeague.get(league.getName());
 			if (newTeams != null) {
 				fillLeagueWithTeams(league, newTeams);
 			}
 		}
-		
+
 		// === SCHRITT 4: Regeneriere Schedules ===
-		for (League league : allLeagues) {
+		for (League league : leagues) {
 			List<Schedule> schedules = scheduleRepository.findAll();
 			for (Schedule s : schedules) {
 				if (s.getLeagueId().equals(league.getId())) {
 					List<Matchday> matchdays = matchdayRepository.findAll();
-					List<Matchday> toDelete = matchdays.stream()
-						.filter(md -> md.getLeagueId().equals(league.getId()))
-						.collect(java.util.stream.Collectors.toList());
+					List<Matchday> toDelete = matchdays.stream().filter(md -> md.getLeagueId().equals(league.getId()))
+							.collect(java.util.stream.Collectors.toList());
 					matchdayRepository.deleteAll(toDelete);
 					scheduleRepository.delete(s);
 				}
@@ -2043,9 +2459,8 @@ public class RepositoryService {
 			createSchedule(league);
 			updateSchedule(league);
 		}
-		System.out.println("[RepositoryService] ✅ Saison-Reset abgeschlossen!");
 	}
-	
+
 	/**
 	 * Verschiebt ein Team zu einer neuen Liga
 	 */
@@ -2102,6 +2517,371 @@ public class RepositoryService {
 				System.out.println("[RepositoryService] Team " + teamId + " → Liga " + league.getName());
 				return;
 			}
+		}
+	}
+
+	// ==================== SCOUTING SYSTEM ====================
+
+	@Autowired
+	private com.example.manager.repository.ScoutRepository scoutRepository;
+
+	@Autowired
+	private com.example.manager.repository.YouthPlayerRepository youthPlayerRepository;
+
+	/**
+	 * Startet einen Scout für ein Team in eine Region für X Tage Kostet 50.000€ pro
+	 * Tag
+	 */
+	public void startScout(Long teamId, String region, int days) {
+		Team team = teamRepository.findById(teamId).orElse(null);
+		if (team == null)
+			return;
+
+		long cost = (long) days * 50000;
+		if (team.getBudgetAsLong() < cost) {
+			throw new IllegalArgumentException("Nicht genug Budget für Scout! Benötigt: " + cost + "€");
+		}
+
+		// Ziehe Kosten ab
+		team.setBudgetAsLong(team.getBudgetAsLong() - cost);
+		teamRepository.save(team);
+
+		// Erstelle Scout
+		com.example.manager.model.Scout scout = new com.example.manager.model.Scout(teamId, region, days);
+		scoutRepository.save(scout);
+
+		System.out.println("[Scouting] Team " + teamId + " startet Scout in " + region + " für " + days
+				+ " Tage (Kosten: " + cost + "€)");
+	}
+
+	/**
+	 * Liefert den aktiven Scout eines Teams (falls vorhanden)
+	 */
+	public com.example.manager.model.Scout getActiveScout(Long teamId) {
+		return scoutRepository.findByTeamIdAndIsActive(teamId, true).orElse(null);
+	}
+
+	/**
+	 * Generiert einen Jugenspieler für einen aktiven Scout (täglich um 15 Uhr) mit
+	 * Ländern aus der Region des Scouts
+	 */
+	public YouthPlayer generateScoutedPlayer(Long scoutId) {
+		com.example.manager.model.Scout scout = scoutRepository.findById(scoutId).orElse(null);
+		if (scout == null || !scout.isActive())
+			return null;
+
+		// Generiere Spieler mit regionsbezogenem Land
+		YouthPlayer player = YouthPlayerGenerator.generateYouthPlayerForRegion(scout.getTeamId(), scoutId,
+				scout.getRegion());
+		youthPlayerRepository.save(player);
+
+		scout.setLastPlayerGeneratedAt(java.time.Instant.now());
+		scoutRepository.save(scout);
+
+		System.out.println("[Scouting] Neuer Jugenspieler gefunden: " + player.getName() + " ("
+				+ player.getOverallPotential() + " Pot)");
+		return player;
+	}
+
+	/**
+	 * Verpflichtet einen Jugenspieler zum Kader
+	 */
+	public void recruitYouthPlayer(Long youthPlayerId) {
+		com.example.manager.model.YouthPlayer youth = youthPlayerRepository.findById(youthPlayerId).orElse(null);
+		if (youth == null || youth.getAge() < 17) {
+			throw new IllegalArgumentException("Nur 17-18 Jährige können zum Kader hinzugefügt werden!");
+		}
+
+		Team team = teamRepository.findById(youth.getTeamId()).orElse(null);
+		if (team == null)
+			return;
+
+		long salary = 100000L / 30; // Pro-Spiel Gehalt für Jugenspieler
+		if (team.getBudgetAsLong() < salary) {
+			throw new IllegalArgumentException("Nicht genug Budget!");
+		}
+
+		// Erstelle echten Spieler aus Jugenspieler
+		Player newPlayer = new Player(youth.getName(), youth.getRating(), youth.getOverallPotential(), 0,
+				youth.getPosition(), youth.getCountry());
+		newPlayer.setTeamId(team.getId());
+		newPlayer.setAge(youth.getAge());
+		newPlayer.setSalary(salary);
+		newPlayer.setContractLength(3);
+
+		// Übertrage alle Skill-Werte vom YouthPlayer
+		newPlayer.setPace(youth.getPace());
+		newPlayer.setDribbling(youth.getDribbling());
+		newPlayer.setBallControl(youth.getBallControl());
+		newPlayer.setShooting(youth.getShooting());
+		newPlayer.setTackling(youth.getTackling());
+		newPlayer.setSliding(youth.getSliding());
+		newPlayer.setHeading(youth.getHeading());
+		newPlayer.setCrossing(youth.getCrossing());
+		newPlayer.setPassing(youth.getPassing());
+		newPlayer.setAwareness(youth.getAwareness());
+		newPlayer.setJumping(youth.getJumping());
+		newPlayer.setStamina(youth.getStamina());
+		newPlayer.setStrength(youth.getStrength());
+
+		// Übertrage alle Potential-Werte vom YouthPlayer
+		newPlayer.setPacePotential(youth.getPacePotential());
+		newPlayer.setDribblingPotential(youth.getDribblingPotential());
+		newPlayer.setBallControlPotential(youth.getBallControlPotential());
+		newPlayer.setShootingPotential(youth.getShootingPotential());
+		newPlayer.setTacklingPotential(youth.getTacklingPotential());
+		newPlayer.setSlidingPotential(youth.getSlidingPotential());
+		newPlayer.setHeadingPotential(youth.getHeadingPotential());
+		newPlayer.setCrossingPotential(youth.getCrossingPotential());
+		newPlayer.setPassingPotential(youth.getPassingPotential());
+		newPlayer.setAwarenessPotential(youth.getAwarenessPotential());
+		newPlayer.setJumpingPotential(youth.getJumpingPotential());
+		newPlayer.setStaminaPotential(youth.getStaminaPotential());
+		newPlayer.setStrengthPotential(youth.getStrengthPotential());
+
+		// Berechne neues Rating und OverallPotential basierend auf den übertragenen
+		// Werten
+		newPlayer.calculateRating();
+		newPlayer.calculateOverallPotential();
+
+		newPlayer.calculateMarketValue();
+		playerRepository.save(newPlayer);
+
+		// Ziehe Gehalt ab (erste Saison)
+		team.setBudgetAsLong(team.getBudgetAsLong() - salary);
+		teamRepository.save(team);
+
+		youth.setRecruited(true);
+		youthPlayerRepository.save(youth);
+
+		System.out.println("[Scouting] Jugenspieler " + youth.getName() + " zum Kader hinzugefügt!");
+	}
+
+	/**
+	 * Verpflichtet einen Jugenspieler (15-16 Jahre) zur Akademie Kostenlos - der
+	 * Spieler kommt in die Akademie
+	 */
+	public void recruitToAcademy(Long youthPlayerId) {
+		com.example.manager.model.YouthPlayer youth = youthPlayerRepository.findById(youthPlayerId).orElse(null);
+		if (youth == null || youth.getAge() > 16) {
+			throw new IllegalArgumentException("Nur 15-16 Jährige können zur Akademie hinzugefügt werden!");
+		}
+
+		// Füge zur Akademie hinzu - KOSTENLOS
+		youth.setInAcademy(true);
+		youth.setRecruited(true); // Markiert als verpflichtet
+		youthPlayerRepository.save(youth);
+
+		System.out.println("[Scouting] Jugenspieler " + youth.getName() + " zur Akademie hinzugefügt (kostenlos)!");
+	}
+
+	/**
+	 * Lehnt einen Jugenspieler ab und löscht ihn
+	 */
+	public void rejectYouthPlayer(Long youthPlayerId) {
+		com.example.manager.model.YouthPlayer youth = youthPlayerRepository.findById(youthPlayerId).orElse(null);
+		if (youth == null) {
+			throw new IllegalArgumentException("Spieler nicht gefunden!");
+		}
+
+		String playerName = youth.getName();
+		youthPlayerRepository.deleteById(youthPlayerId);
+
+		System.out.println("[Scouting] Jugenspieler " + playerName + " abgelehnt und gelöscht!");
+	}
+
+	/**
+	 * Gibt alle Jugenspieler in der Akademie für ein Team zurück
+	 */
+	public List<com.example.manager.model.YouthPlayer> getYouthAcademy(Long teamId) {
+		return youthPlayerRepository.findByTeamIdAndIsInAcademyTrue(teamId);
+	}
+
+	/**
+	 * Gibt alle gescouteten Spieler für ein Team zurück (zum Anzeigen im
+	 * Scout-Interface) Nur unverpflichtete Spieler werden angezeigt
+	 */
+	public List<com.example.manager.model.YouthPlayer> getScoutedPlayers(Long teamId) {
+		return youthPlayerRepository.findByTeamId(teamId).stream().filter(p -> !p.isRecruited()) // Nur unverpflichtete
+				.toList();
+	}
+
+	/**
+	 * Trainiert alle Akademie-Spieler eines Teams nach einem Spieltag Jeder Skill
+	 * hat 15% Chance um 1 zu steigen
+	 */
+	public void trainAcademyPlayers(Long teamId) {
+		try {
+			List<com.example.manager.model.YouthPlayer> academyPlayers = youthPlayerRepository
+					.findByTeamIdAndIsInAcademyTrue(teamId);
+
+			Random rand = new Random();
+			int trainedCount = 0;
+			int skillsImproved = 0;
+
+			for (com.example.manager.model.YouthPlayer player : academyPlayers) {
+				int skillsBefore = getAcademySkillCount(player);
+
+				// Trainiere den Spieler
+				player.trainInAcademy(rand);
+
+				int skillsAfter = getAcademySkillCount(player);
+
+				youthPlayerRepository.save(player);
+
+				trainedCount++;
+				skillsImproved += (skillsAfter - skillsBefore);
+			}
+
+			if (trainedCount > 0) {
+				System.out.println("[Academy Training] Team " + teamId + ": " + trainedCount
+						+ " Akademie-Spieler trainiert, " + skillsImproved + " Skills verbessert");
+			}
+		} catch (Exception e) {
+			System.err.println("[Academy Training] Fehler beim Training für Team " + teamId + ": " + e.getMessage());
+		}
+	}
+
+	/**
+	 * Zählt die Summe aller Skills eines Akademie-Spielers
+	 */
+	private int getAcademySkillCount(com.example.manager.model.YouthPlayer player) {
+		return player.getPace() + player.getDribbling() + player.getBallControl() + player.getShooting()
+				+ player.getTackling() + player.getSliding() + player.getHeading() + player.getCrossing()
+				+ player.getPassing() + player.getAwareness() + player.getJumping() + player.getStamina()
+				+ player.getStrength();
+	}
+
+	/**
+	 * Prozessiert das Ende einer Saison: - Alle Spieler altern um 1 Jahr - Prüfe
+	 * Spieler >= 35 Jahren auf Karriereende - Akademie-Spieler, die 17 werden,
+	 * kommen automatisch zum Kader
+	 */
+	public void endSeason() {
+		try {
+
+			Random rand = new Random();
+
+			// SCHRITT 1: Alle Spieler um 1 Jahr altern
+			List<Player> players = playerRepository.findAll();
+			for (Player player : players) {
+				player.setAge(player.getAge() + 1);
+			}
+			playerRepository.saveAll(players);
+			System.out.println("[EndSeason] " + players.size() + " Spieler um 1 Jahr gealtert");
+
+			// SCHRITT 2: Prüfe Spieler >= 35 Jahren auf Karriereende
+			List<Player> playersToRemove = new ArrayList<>();
+			for (Player player : players) {
+				if (player.getAge() >= 35) {
+					int retirementChance = 0;
+					switch (player.getAge()) {
+					case 35:
+						retirementChance = 10;
+						break;
+					case 36:
+						retirementChance = 20;
+						break;
+					case 37:
+						retirementChance = 30;
+						break;
+					case 38:
+						retirementChance = 50;
+						break;
+					case 39:
+						retirementChance = 70;
+						break;
+					default:
+						retirementChance = 100;
+						break; // 40+
+					}
+
+					if (rand.nextInt(100) < retirementChance) {
+						playersToRemove.add(player);
+						System.out.println("[EndSeason] Spieler " + player.getName() + " (Alter " + player.getAge()
+								+ ") beendet Karriere!");
+					}
+				}
+			}
+
+			// Entferne Spieler mit Karriereende
+			if (!playersToRemove.isEmpty()) {
+				playerRepository.deleteAll(playersToRemove);
+				System.out.println("[EndSeason] " + playersToRemove.size() + " Spieler beendeten Karriere");
+			}
+
+			// SCHRITT 3: Verarbeite Jugenspieler
+			List<com.example.manager.model.YouthPlayer> youthPlayers = youthPlayerRepository.findAll();
+
+			// Erst alle altern
+			for (com.example.manager.model.YouthPlayer youth : youthPlayers) {
+				youth.setAge(youth.getAge() + 1);
+			}
+			youthPlayerRepository.saveAll(youthPlayers);
+			System.out.println("[EndSeason] " + youthPlayers.size() + " Jugenspieler um 1 Jahr gealtert");
+
+			// Dann Akademie-Spieler die 17 werden zum Kader befördern
+			List<com.example.manager.model.YouthPlayer> toPromote = youthPlayers.stream()
+					.filter(y -> y.getAge() == 17 && y.isInAcademy() && !y.isRecruited()).toList();
+
+			for (com.example.manager.model.YouthPlayer youth : toPromote) {
+				long salary = 100000L / 30; // Pro-Spiel Gehalt
+				// Erstelle Spieler
+				Player newPlayer = new Player(youth.getName(), youth.getRating(), youth.getOverallPotential(), 0,
+						youth.getPosition(), youth.getCountry());
+				newPlayer.setTeamId(youth.getTeamId());
+				newPlayer.setAge(youth.getAge());
+				newPlayer.setSalary(salary);
+				newPlayer.setContractLength(3);
+
+				// Übertrage Skills und Potentiale
+				newPlayer.setPace(youth.getPace());
+				newPlayer.setDribbling(youth.getDribbling());
+				newPlayer.setBallControl(youth.getBallControl());
+				newPlayer.setShooting(youth.getShooting());
+				newPlayer.setTackling(youth.getTackling());
+				newPlayer.setSliding(youth.getSliding());
+				newPlayer.setHeading(youth.getHeading());
+				newPlayer.setCrossing(youth.getCrossing());
+				newPlayer.setPassing(youth.getPassing());
+				newPlayer.setAwareness(youth.getAwareness());
+				newPlayer.setJumping(youth.getJumping());
+				newPlayer.setStamina(youth.getStamina());
+				newPlayer.setStrength(youth.getStrength());
+
+				newPlayer.setPacePotential(youth.getPacePotential());
+				newPlayer.setDribblingPotential(youth.getDribblingPotential());
+				newPlayer.setBallControlPotential(youth.getBallControlPotential());
+				newPlayer.setShootingPotential(youth.getShootingPotential());
+				newPlayer.setTacklingPotential(youth.getTacklingPotential());
+				newPlayer.setSlidingPotential(youth.getSlidingPotential());
+				newPlayer.setHeadingPotential(youth.getHeadingPotential());
+				newPlayer.setCrossingPotential(youth.getCrossingPotential());
+				newPlayer.setPassingPotential(youth.getPassingPotential());
+				newPlayer.setAwarenessPotential(youth.getAwarenessPotential());
+				newPlayer.setJumpingPotential(youth.getJumpingPotential());
+				newPlayer.setStaminaPotential(youth.getStaminaPotential());
+				newPlayer.setStrengthPotential(youth.getStrengthPotential());
+
+				newPlayer.calculateRating();
+				newPlayer.calculateOverallPotential();
+				newPlayer.calculateMarketValue();
+				playerRepository.save(newPlayer);
+
+				// Markiere Youth-Spieler als verpflichtet
+				youth.setRecruited(true);
+				youth.setInAcademy(false);
+
+				System.out.println("[EndSeason] Akademie-Spieler " + youth.getName()
+						+ " (jetzt 17 Jahre) automatisch zum Kader verpflichtet!");
+			}
+
+			// Speichere Youth-Spieler
+			youthPlayerRepository.saveAll(youthPlayers);
+
+		} catch (Exception e) {
+			System.err.println("[EndSeason] Fehler beim Verarbeiten des Saison-Endes: " + e.getMessage());
+			e.printStackTrace();
 		}
 	}
 }

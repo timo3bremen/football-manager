@@ -6,6 +6,7 @@ package com.example.manager.dto;
 public class LeagueInfoDTO {
     private Long id;
     private String name;
+    private String country;
     private int division;
     private String divisionLabel;
     private int filledSlots;
@@ -14,9 +15,10 @@ public class LeagueInfoDTO {
     public LeagueInfoDTO() {
     }
 
-    public LeagueInfoDTO(Long id, String name, int division, String divisionLabel, int filledSlots, int totalSlots) {
+    public LeagueInfoDTO(Long id, String name, String country, int division, String divisionLabel, int filledSlots, int totalSlots) {
         this.id = id;
         this.name = name;
+        this.country = country;
         this.division = division;
         this.divisionLabel = divisionLabel;
         this.filledSlots = filledSlots;
@@ -37,6 +39,14 @@ public class LeagueInfoDTO {
 
     public void setName(String name) {
         this.name = name;
+    }
+
+    public String getCountry() {
+        return country;
+    }
+
+    public void setCountry(String country) {
+        this.country = country;
     }
 
     public int getDivision() {

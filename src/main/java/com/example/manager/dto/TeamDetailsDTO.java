@@ -9,7 +9,11 @@ public class TeamDetailsDTO {
 	private int playersInLineup;
 	private int totalPlayers;
 	private int teamStrength;
+	private Integer stadiumCapacity;
+	private String country;
+	private String leagueName;
 	private java.util.List<PlayerLineupDTO> lineup;
+	private java.util.List<PlayerLineupDTO> allPlayers;
 
 	public TeamDetailsDTO(Long teamId, String teamName, int playersInLineup, int totalPlayers, int teamStrength) {
 		this.teamId = teamId;
@@ -18,9 +22,10 @@ public class TeamDetailsDTO {
 		this.totalPlayers = totalPlayers;
 		this.teamStrength = teamStrength;
 		this.lineup = new java.util.ArrayList<>();
+		this.allPlayers = new java.util.ArrayList<>();
 	}
 
-	// Getters and Setters
+	// ...existing code...
 	public Long getTeamId() {
 		return teamId;
 	}
@@ -67,5 +72,37 @@ public class TeamDetailsDTO {
 
 	public void setLineup(java.util.List<PlayerLineupDTO> lineup) {
 		this.lineup = lineup;
+	}
+
+	public Integer getStadiumCapacity() {
+		return stadiumCapacity;
+	}
+
+	public void setStadiumCapacity(Integer stadiumCapacity) {
+		this.stadiumCapacity = stadiumCapacity;
+	}
+
+	public String getCountry() {
+		return country;
+	}
+
+	public void setCountry(String country) {
+		this.country = country;
+	}
+
+	public String getLeagueName() {
+		return leagueName;
+	}
+
+	public void setLeagueName(String leagueName) {
+		this.leagueName = leagueName;
+	}
+
+	public java.util.List<PlayerLineupDTO> getAllPlayers() {
+		return allPlayers;
+	}
+
+	public void setAllPlayers(java.util.List<PlayerLineupDTO> allPlayers) {
+		this.allPlayers = allPlayers;
 	}
 }

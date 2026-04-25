@@ -64,9 +64,99 @@ body{
 .form{display:flex;flex-direction:column;gap:10px;max-width:480px}
 .input{padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:var(--glass);color:var(--text)}
 
+@media (max-width:768px){
+  .form{
+    max-width: 100%;
+  }
+  
+  .input, select, textarea{
+    padding: 12px;
+    font-size: 16px;
+    border-radius: 8px;
+    min-height: 44px;
+  }
+  
+  input::placeholder, select, textarea{
+    font-size: 16px;
+  }
+}
+
 .menu{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
 .menu button{padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:var(--muted)}
 .menu button.active{background:linear-gradient(90deg,var(--accent),var(--accent-2));color:#011;border:none}
+
+/* ...existing code... */
+
+/* Desktop: Show horizontal layout */
+@media (min-width: 769px) {
+  .match-desktop{
+    display: flex !important;
+  }
+  
+  .match-mobile{
+    display: none !important;
+  }
+}
+
+/* Mobile: Show vertical layout */
+@media (max-width: 768px){
+  .menu{
+    overflow-x: auto;
+    gap: 6px;
+    padding-bottom: 6px;
+    scroll-behavior: smooth;
+  }
+  
+  .menu button{
+    white-space: nowrap;
+    flex-shrink: 0;
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+  
+  /* Match card mobile optimizations */
+  .match-card{
+    display: flex !important;
+    flex-direction: column !important;
+    padding: 10px !important;
+  }
+  
+  .match-desktop{
+    display: none !important;
+  }
+  
+  .match-mobile{
+    display: flex !important;
+  }
+  
+  .match-actions{
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+  }
+  
+  .match-actions button{
+    flex: 1 1 auto;
+    min-width: 70px;
+    padding: 8px 10px !important;
+    font-size: 12px !important;
+  }
+  
+  /* Table mobile optimizations */
+  table{
+    min-width: 400px;
+  }
+  
+  table th, table td{
+    padding: 6px 4px !important;
+    font-size: 11px !important;
+  }
+  
+  table th{
+    font-size: 10px !important;
+  }
+}
 
 .columns{display:flex;gap:20px}
 .col-1{flex:1}
@@ -74,7 +164,7 @@ body{
 
 .pitch{background:linear-gradient(180deg,#0b3a19,#063014);padding:14px;border-radius:12px;border:1px solid rgba(255,255,255,0.03)}
 .pitch-row{display:flex;gap:12px;justify-content:center;margin-bottom:12px}
-.slot{min-width:110px;min-height:56px;display:flex;align-items:center;justify-content:center;border-radius:8px;border:1px dashed rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);cursor:pointer}
+.slot{min-width:110px;min-height:72px;display:flex;align-items:center;justify-content:center;border-radius:8px;border:1px dashed rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);cursor:pointer}
 .slot.empty{color:var(--muted)}
 .roster-list{list-style:none;padding:0;margin:0}
 .roster-item{display:flex;align-items:center;gap:8px;padding:8px;border-radius:8px;margin-bottom:8px;background:rgba(255,255,255,0.015)}
@@ -132,18 +222,263 @@ ul{padding-left:18px}
   letter-spacing: 0.5px;
 }
 
-@media (max-width:720px){
-  .columns{flex-direction:column}
-  .app-container{margin:12px}
-  .clock{
-    min-width: 140px;
-    padding: 8px 12px;
+/* Mobile-Responsive Design */
+@media (max-width:768px){
+  .app-container{
+    max-width: 100%;
+    margin: 0;
+    padding: 12px;
   }
+  
+  .header{
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  
+  .brand{
+    width: 100%;
+    justify-content: space-between;
+  }
+  
+  .title{
+    font-size: 18px;
+  }
+  
+  .columns{
+    flex-direction: column;
+    gap: 12px;
+  }
+  
+  .col-1, .col-2{
+    flex: 1;
+  }
+  
+  .card{
+    padding: 12px;
+  }
+  
+  .btn{
+    padding: 12px;
+    font-size: 14px;
+    min-width: 100%;
+  }
+  
+  .buttons-row{
+    flex-direction: column;
+  }
+  
+  .form{
+    max-width: 100%;
+  }
+  
+  .input{
+    padding: 12px;
+    font-size: 16px;
+  }
+  
+  .menu{
+    gap: 6px;
+  }
+  
+  .menu button{
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+  
+  .pitch{
+    padding: 10px;
+  }
+  
+  .pitch-row{
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+  
+  .slot{
+    min-width: 70px;
+    min-height: 50px;
+    font-size: 12px;
+  }
+  
+  .roster-item{
+    padding: 10px;
+    font-size: 14px;
+  }
+  
+  .stadium-thumb{
+    width: 100%;
+    height: 100px;
+  }
+  
+  .modal{
+    max-width: 95%;
+    padding: 14px;
+  }
+  
+  .stadium-grid{
+    gap: 6px;
+  }
+  
+  .stadium-cell{
+    width: 40px;
+    height: 40px;
+    font-size: 10px;
+  }
+  
+  .clock{
+    min-width: 120px;
+    padding: 8px 10px;
+  }
+  
   .clock-time{
     font-size: 14px;
   }
+  
   .clock-date{
-    font-size: 10px;
+    font-size: 9px;
+  }
+  
+  /* Fix touch targets for mobile */
+  input, button, select, textarea{
+    min-height: 44px;
+  }
+  
+  /* Prevent zoom on input focus for iOS */
+  input, select, textarea{
+    font-size: 16px !important;
+  }
+}
+
+/* Extra small devices (< 480px) */
+@media (max-width:480px){
+  .app-container{
+    padding: 8px;
+  }
+  
+  .title{
+    font-size: 16px;
+  }
+  
+  .subtitle{
+    font-size: 12px;
+  }
+  
+  .header{
+    gap: 8px;
+  }
+  
+  .logo{
+    width: 40px;
+    height: 40px;
+  }
+  
+  .card{
+    padding: 10px;
+  }
+  
+  .btn{
+    padding: 10px;
+    font-size: 13px;
+  }
+  
+  .btn:active{
+    transform: translateY(0px);
+  }
+  
+  .input{
+    padding: 10px;
+    font-size: 16px;
+  }
+  
+  .menu{
+    gap: 4px;
+  }
+  
+  .menu button{
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+  
+  .pitch{
+    padding: 8px;
+  }
+  
+  .pitch-row{
+    gap: 4px;
+    margin-bottom: 8px;
+  }
+  
+  .slot{
+    min-width: 60px;
+    min-height: 45px;
+    font-size: 11px;
+  }
+  
+  .roster-item{
+    padding: 8px;
+    font-size: 13px;
+  }
+  
+  .stadium-grid{
+    gap: 4px;
+  }
+  
+  .stadium-cell{
+    width: 35px;
+    height: 35px;
+    font-size: 9px;
+  }
+  
+  .modal{
+    max-width: 100%;
+    padding: 12px;
+  }
+  
+  .stadium-legend{
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  
+  .legend-item{
+    font-size: 12px;
+  }
+  
+  .clock{
+    min-width: 100px;
+    padding: 6px 8px;
+  }
+  
+  .clock-time{
+    font-size: 13px;
+  }
+  
+  .clock-date{
+    font-size: 8px;
+  }
+  
+  .home-cta{
+    gap: 8px;
+  }
+}
+
+/* Landscape orientation adjustments */
+@media (max-width:768px) and (orientation:landscape){
+  .app-container{
+    margin: 8px auto;
+    padding: 10px;
+  }
+  
+  .header{
+    margin-bottom: 8px;
+  }
+  
+  .title{
+    font-size: 16px;
+  }
+  
+  .columns{
+    gap: 10px;
   }
 }
 

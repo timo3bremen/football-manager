@@ -9,6 +9,8 @@ public class PlayerLineupDTO {
 	private String position;
 	private int rating;
 	private int slotName;
+	private Integer age;
+	private String country;
 
 	public PlayerLineupDTO(Long playerId, String playerName, String position, int rating, int slotName) {
 		this.playerId = playerId;
@@ -18,7 +20,16 @@ public class PlayerLineupDTO {
 		this.slotName = slotName;
 	}
 
-	// Getters and Setters
+	public PlayerLineupDTO(Long playerId, String playerName, String position, int rating, Integer age, String country) {
+		this.playerId = playerId;
+		this.playerName = playerName;
+		this.position = position;
+		this.rating = rating;
+		this.age = age;
+		this.country = country;
+	}
+
+	// ...existing code...
 	public Long getPlayerId() {
 		return playerId;
 	}
@@ -57,5 +68,21 @@ public class PlayerLineupDTO {
 
 	public void setSlotName(int slotName) {
 		this.slotName = slotName;
+	}
+
+	public Integer getAge() {
+		return age;
+	}
+
+	public void setAge(Integer age) {
+		this.age = age;
+	}
+
+	public String getCountry() {
+		return country;
+	}
+
+	public void setCountry(String country) {
+		this.country = country;
 	}
 }
