@@ -1,0 +1,206 @@
+# Zuschauereinnahmen & Fanfreundschaft System
+
+## Übersicht
+Nach jedem Heimspiel werden automatisch Zuschauereinnahmen basierend auf Stadionkapazität, Fanfreundschaft UND Ticketpreisen berechnet.
+
+## Features
+
+### 1. **Fanfreundschaft (Fan Satisfaction)**
+- Wertebereich: 0-100%
+- Standardwert: 75%
+- Beeinflusst die Basis-Auslastung
+
+### 2. **Stadion-Auslastung nach Fanfreundschaft**
+
+| Fanfreundschaft | Basis-Auslastung |
+|----------------|------------------|
+| 95-100% | 100% |
+| 85-95% | 90-100% |
+| 70-85% | 75-90% |
+| 50-70% | 50-75% |
+| 30-50% | 35-50% |
+| 10-30% | 10-35% |
+| 0-10% | 0-10% |
+
+### 3. **Ticketpreise & Preis-Auslastungs-System**
+
+#### Empfohlene Preis-Bereiche:
+- **Stehplätze**: 20-40€ (Standard: 5€)
+  - Unter 10€: +5-10% Bonus-Auslastung
+  - 20-40€: Normale Auslastung (100%)
+  - 40-60€: 60-100% Auslastung (linear reduziert)
+  - 60-100€: 20-60% Auslastung (stark reduziert)
+  - Über 100€: 1-20% Auslastung (drastisch reduziert)
+  - Über 200€: Nur 1% kommen noch!
+
+- **Sitzplätze**: 40-80€ (Standard: 10€)
+  - Unter 20€: +5-10% Bonus-Auslastung
+  - 40-80€: Normale Auslastung (100%)
+  - 80-120€: 60-100% Auslastung
+  - 120-200€: 20-60% Auslastung
+  - Über 200€: 1-20% Auslastung
+  - Über 400€: Nur 1% kommen noch!
+
+- **VIP-Plätze**: 80-200€ (Standard: 20€)
+  - Unter 40€: +5-10% Bonus-Auslastung
+  - 80-200€: Normale Auslastung (100%)
+  - 200-300€: 60-100% Auslastung
+  - 300-500€: 20-60% Auslastung
+  - Über 500€: 1-20% Auslastung
+  - Über 1000€: Nur 1% kommen noch!
+
+### 4. **Einnahmen-Berechnung**
+```
+1. Basis-Auslastung aus Fanfreundschaft ermitteln (z.B. 80%)
+2. Preis-Modifier für jeden Platztyp berechnen:
+   - Stehplatz-Modifier (z.B. 100% bei normalem Preis)
+   - Sitzplatz-Modifier (z.B. 70% bei hohem Preis)
+   - VIP-Modifier (z.B. 90% bei normalem Preis)
+3. Tatsächliche Auslastung = Basis × Modifier
+4. Zuschauer pro Typ = Plätze × (Basis-Auslastung × Preis-Modifier)
+5. Einnahmen = Summe aller (Zuschauer × Ticketpreis)
+```
+
+### 5. **Fanfreundschaft-Änderung nach Spiel**
+
+#### Spielergebnis-Einfluss:
+- **Sieg gegen deutlich schwächeren Gegner**: +1 bis +3
+- **Sieg gegen etwas schwächeren Gegner**: +2 bis +4
+- **Sieg gegen ebenbürtigen Gegner**: +3 bis +5
+- **Sieg gegen etwas stärkeren Gegner**: +4 bis +6
+- **Sieg gegen deutlich stärkeren Gegner**: +5 bis +8
+
+- **Niederlage gegen deutlich schwächeren Gegner**: -5 bis -8
+- **Niederlage gegen etwas schwächeren Gegner**: -4 bis -6
+- **Niederlage gegen ebenbürtigen Gegner**: -3 bis -5
+- **Niederlage gegen etwas stärkeren Gegner**: -2 bis -4
+- **Niederlage gegen deutlich stärkeren Gegner**: -1 bis -3
+
+- **Unentschieden**: -1 bis +1 (neutral)
+
+#### Ticketpreis-Einfluss auf Fanfreundschaft:
+- **Stehplätze > 15€**: -2 Fanfreundschaft
+- **Stehplätze > 10€**: -1 Fanfreundschaft
+- **Stehplätze < 4€**: +1 Fanfreundschaft
+- **Sitzplätze > 25€**: -2 Fanfreundschaft
+- **Sitzplätze > 18€**: -1 Fanfreundschaft
+- **Sitzplätze < 8€**: +1 Fanfreundschaft
+- **VIP > 40€**: -1 Fanfreundschaft
+- **VIP < 15€**: +1 Fanfreundschaft
+
+## Beispiel-Berechnungen
+
+### Beispiel 1: Normale Preise, gute Fanfreundschaft
+**Ausgangslage:**
+- Stadion: 1.000 Stehplätze, 0 Sitzplätze, 0 VIP-Plätze
+- Fanfreundschaft: 75% → Basis-Auslastung: 75-90% → z.B. 84%
+- Preise: Steh=5€, Sitz=10€, VIP=20€
+
+**Berechnung:**
+- Stehplatz-Modifier: 1.10 (günstiger Preis!)
+- Stehplatz-Zuschauer: 1000 × 0.84 × 1.10 = 924
+- Einnahmen: 924 × 5€ = **4.620€** ✅
+
+### Beispiel 2: Extreme Preise, mittlere Fanfreundschaft
+**Ausgangslage:**
+- Stadion: 1.000 Stehplätze, 500 Sitzplätze, 100 VIP-Plätze
+- Fanfreundschaft: 75% → Basis-Auslastung: 84%
+- Preise: Steh=100€, Sitz=200€, VIP=1000€
+
+**Berechnung:**
+- Stehplatz-Modifier: 0.05 (extrem teuer! 95% Reduktion)
+- Sitzplatz-Modifier: 0.05 (extrem teuer! 95% Reduktion)
+- VIP-Modifier: 0.01 (völlig unrealistisch! 99% Reduktion)
+
+- Stehplatz-Zuschauer: 1000 × 0.84 × 0.05 = 42
+- Sitzplatz-Zuschauer: 500 × 0.84 × 0.05 = 21
+- VIP-Zuschauer: 100 × 0.84 × 0.01 = 1
+
+- Total: 64 Zuschauer (nur 4% Auslastung!)
+
+- Einnahmen: (42 × 100€) + (21 × 200€) + (1 × 1000€) = **9.400€**
+
+**Aber:** Fanfreundschaft sinkt um -6 bis -8 Punkte!
+
+### Beispiel 3: Optimale Strategie
+**Ausgangslage:**
+- Stadion: 5.000 Stehplätze, 3.000 Sitzplätze, 500 VIP-Plätze
+- Fanfreundschaft: 85% → Basis-Auslastung: 95%
+- Preise: Steh=30€, Sitz=60€, VIP=150€ (im normalen Bereich!)
+
+**Berechnung:**
+- Alle Modifier: 1.0 (normale Preise)
+- Steh: 5000 × 0.95 × 1.0 = 4.750
+- Sitz: 3000 × 0.95 × 1.0 = 2.850
+- VIP: 500 × 0.95 × 1.0 = 475
+
+- Total: 8.075 Zuschauer (95% Auslastung)
+- Einnahmen: (4.750 × 30€) + (2.850 × 60€) + (475 × 150€) = **384.750€** 🎉
+
+## API Endpoints
+
+### GET `/api/v2/tickets/team/{teamId}`
+Gibt aktuelle Ticketpreise und Fanfreundschaft zurück.
+
+**Response:**
+```json
+{
+  "teamId": 1,
+  "teamName": "FC Example",
+  "ticketPriceStanding": 5,
+  "ticketPriceSeated": 10,
+  "ticketPriceVip": 20,
+  "fanSatisfaction": 75,
+  "stadiumCapacityStanding": 1000,
+  "stadiumCapacitySeated": 0,
+  "stadiumCapacityVip": 0,
+  "stadiumCapacityTotal": 1000
+}
+```
+
+### PUT `/api/v2/tickets/team/{teamId}`
+Aktualisiert Ticketpreise für ein Team.
+
+**Request Body:**
+```json
+{
+  "ticketPriceStanding": 25,
+  "ticketPriceSeated": 50,
+  "ticketPriceVip": 120
+}
+```
+
+## Datenbank-Schema
+
+### Team-Tabelle (Neue Felder):
+- `stadium_capacity_standing` (BIGINT, DEFAULT 1000) - Stehplätze
+- `stadium_capacity_seated` (BIGINT, DEFAULT 0) - Sitzplätze
+- `stadium_capacity_vip` (BIGINT, DEFAULT 0) - VIP-Plätze
+- `fan_satisfaction` (INT, DEFAULT 75) - Fanfreundschaft in %
+- `ticket_price_standing` (INT, DEFAULT 5) - Preis für Stehplätze in €
+- `ticket_price_seated` (INT, DEFAULT 10) - Preis für Sitzplätze in €
+- `ticket_price_vip` (INT, DEFAULT 20) - Preis für VIP-Plätze in €
+
+### Match-Tabelle:
+- `attendance` (BIGINT) - Zuschauerzahl des Heimspiels
+
+## Strategie-Tipps
+
+### 💰 Maximale Einnahmen:
+- Preise im normalen Bereich halten (keine Reduktion)
+- Hohe Fanfreundschaft aufbauen (>85% für 90-100% Auslastung)
+- Stadion ausbauen (mehr Plätze = mehr Einnahmen)
+- Nach Siegen Preise leicht erhöhen
+
+### 😊 Fanfreundschaft schützen:
+- Preise unter normalMin halten
+- Gegen starke Gegner spielen (Niederlagen weniger schlimm)
+- Siege feiern (vor allem gegen Ebenbürtige)
+
+### ⚖️ Balance-Strategie:
+- Stehplätze: 25-35€ (gute Einnahmen, akzeptable Auslastung)
+- Sitzplätze: 50-70€ (Premium, aber nicht zu teuer)
+- VIP: 120-180€ (Luxus-Segment)
+
+**Warnung:** Preise über dem "extreme" Bereich führen zu fast leeren Stadien!
+

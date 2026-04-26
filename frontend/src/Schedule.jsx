@@ -460,17 +460,18 @@ export default function Schedule(){
                  loadCurrentMatchday()
                  loadStandings()
                  loadMatchday(data.newMatchday)
-                 setLoading(false)
-                 // Zeige eine Nachricht
-                 if (data.message) {
-                   alert(data.message)
-                 }
-                 // Wenn Saison Reset, lade auch Ligen neu
-                 if (data.seasonReset) {
-                   loadLeagues()
-                 }
-                 // Update budget (season end bonuses)
-                 window.dispatchEvent(new Event('teamUpdated'))
+                  setLoading(false)
+                  // Zeige eine Nachricht
+                  if (data.message) {
+                    alert(data.message)
+                  }
+                  // Wenn Saison Reset, lade auch Ligen neu
+                  if (data.seasonReset) {
+                    loadLeagues()
+                  }
+                  // Update budget (season end bonuses) und neuer Spieltag
+                  window.dispatchEvent(new Event('matchdayChanged'))
+                  window.dispatchEvent(new Event('teamUpdated'))
                })
                .catch(e => {
                  console.error('Fehler beim Weiterschalten:', e)
@@ -506,13 +507,14 @@ export default function Schedule(){
                  loadCurrentMatchday()
                  loadStandings()
                  loadMatchday(data.newMatchday)
-                 setLoading(false)
-                 // Zeige eine Nachricht
-                 if (data.message) {
-                   alert(data.message)
-                 }
-                 // Update budget (all season payouts)
-                 window.dispatchEvent(new Event('teamUpdated'))
+                  setLoading(false)
+                  // Zeige eine Nachricht
+                  if (data.message) {
+                    alert(data.message)
+                  }
+                  // Update budget (all season payouts) und neuer Spieltag
+                  window.dispatchEvent(new Event('matchdayChanged'))
+                  window.dispatchEvent(new Event('teamUpdated'))
                })
                .catch(e => {
                  console.error('Fehler bei Saison-Simulation:', e)
@@ -1145,6 +1147,19 @@ export default function Schedule(){
                 <div style={{ fontSize: '1.3em', fontWeight: 'bold', marginBottom: 8 }}>
                   {matchReport.homeTeamName} {matchReport.homeGoals} : {matchReport.awayGoals} {matchReport.awayTeamName}
                 </div>
+                {matchReport.attendance && (
+                  <div style={{ 
+                    fontSize: '14px', 
+                    color: '#999', 
+                    marginBottom: 12,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}>
+                    <span>👥</span>
+                    <span>{matchReport.attendance.toLocaleString()} Zuschauer</span>
+                  </div>
+                )}
               </div>
               <button
                 onClick={() => setShowMatchReport(false)}

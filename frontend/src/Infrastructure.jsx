@@ -4,7 +4,7 @@ import { useGame } from './GameContext'
 const API_BASE = 'http://192.168.178.21:8080'
 
 export default function Infrastructure(){
-  const { getStadiumSummary, setStadiumPart, stadiumEntryPrice, setStadiumEntryPrice, fanFriendship, balance, addTransaction } = useGame()
+  const { getStadiumSummary, setStadiumPart, stadiumEntryPrice, setStadiumEntryPrice, fanFriendship, balance, addTransaction, stadiumParts } = useGame()
   const { team } = useGame()
   const [infraSubTab, setInfraSubTab] = useState('stadium') // 'stadium', 'training', 'fanshop', 'gastro'
   const [showBuildModal, setShowBuildModal] = useState(false)
@@ -12,6 +12,8 @@ export default function Infrastructure(){
   const [buildType, setBuildType] = useState('standing')
   const [buildInProgress, setBuildInProgress] = useState(null)
   const [timeRemaining, setTimeRemaining] = useState(0)
+  const [ticketInfo, setTicketInfo] = useState(null)
+  const [previousFanSat, setPreviousFanSat] = useState(null)
 
   const summary = getStadiumSummary()
 
@@ -19,7 +21,67 @@ export default function Infrastructure(){
   useEffect(() => {
     if (!team?.id) return
     loadBuildStatus()
+    loadTicketInfo()
   }, [team?.id])
+
+  // Reload build status when team is updated (e.g., after "Nächster Tag")
+  useEffect(() => {
+    const handleTeamUpdate = () => {
+      if (team?.id) {
+        loadBuildStatus()
+        loadTicketInfo()
+      }
+    }
+    
+    window.addEventListener('teamUpdated', handleTeamUpdate)
+    return () => window.removeEventListener('teamUpdated', handleTeamUpdate)
+  }, [team?.id])
+
+  // Load ticket info (fan satisfaction, prices) from backend
+  const loadTicketInfo = async () => {
+    try {
+      const authRaw = localStorage.getItem('fm_auth')
+      const token = authRaw ? JSON.parse(authRaw).token : null
+      const headers = token ? { 'X-Auth-Token': token } : {}
+
+      const res = await fetch(`${API_BASE}/api/v2/tickets/team/${team.id}`, { headers })
+      const data = await res.json()
+
+      if (data.fanSatisfaction !== undefined) {
+        // Store previous value for change indicator
+        if (ticketInfo) {
+          setPreviousFanSat(ticketInfo.fanSatisfaction)
+        }
+        setTicketInfo(data)
+        
+        // Update ticket prices in frontend state
+        if (data.ticketPriceStanding !== undefined || data.ticketPriceSeated !== undefined || data.ticketPriceVip !== undefined) {
+          setStadiumEntryPrice({
+            standing: data.ticketPriceStanding || 20,
+            seated: data.ticketPriceSeated || 40,
+            vip: data.ticketPriceVip || 80
+          })
+        }
+      }
+    } catch (err) {
+      console.error('Error loading ticket info:', err)
+    }
+  }
+
+  // Regelmäßig prüfen ob Stadionausbau fertig ist (alle 10 Sekunden)
+  useEffect(() => {
+    if (!team?.id) return
+    
+    const interval = setInterval(() => {
+      loadBuildStatus()
+      // Wenn kein Build mehr aktiv ist, lade Team neu für aktualisierte Kapazität
+      if (!buildInProgress) {
+        window.dispatchEvent(new Event('teamUpdated'))
+      }
+    }, 10000) // Alle 10 Sekunden
+    
+    return () => clearInterval(interval)
+  }, [team?.id, buildInProgress])
 
   // Load build status from API
   const loadBuildStatus = async () => {
@@ -45,10 +107,9 @@ export default function Infrastructure(){
     }
   }
 
-  // Berechne Baudauer: 1.000 Plätze = 1 Tag (86.400 Sekunden)
-  // 1 Platz = 86,4 Sekunden
+  // Berechne Baudauer: 1.000 Plätze = 1 Tag (86.400 Sekunden), 1 Platz = 86,4 Sekunden
   const calculateBuildDuration = (numSeats) => {
-    return numSeats * 86.4 // in Sekunden
+    return Math.round((numSeats / 1000) * 86400) // Sekunden
   }
 
   // Update countdown timer
@@ -61,37 +122,57 @@ export default function Infrastructure(){
       
       setTimeRemaining(remaining)
 
-      if (remaining === 0) {
-        // Bau fertig!
-        const sections = Math.ceil(buildInProgress.totalSeats / 1000)
-        for (let i = 0; i < sections; i++) {
-          setStadiumPart(i, buildInProgress.seatType)
-        }
-        
-        // Melde Fertigstellung zum Backend
-        const completeBuild = async () => {
-          try {
-            const authRaw = localStorage.getItem('fm_auth')
-            const token = authRaw ? JSON.parse(authRaw).token : null
-            const headers = {
-              'Content-Type': 'application/json',
-              ...(token && { 'X-Auth-Token': token })
-            }
+       if (remaining === 0) {
+         // Bau fertig!
+         const sections = Math.ceil(buildInProgress.totalSeats / 1000)
+         
+         // Aktualisiere Stadion-Teile im Frontend
+         // Starte Index bei 0 für den ersten neuen Teil
+         let nextIndex = 0
+         // Finde den nächsten freien Index
+         if (stadiumParts && stadiumParts.length > 0) {
+           for (let i = 0; i < 30; i++) {
+             if (!stadiumParts[i] || !stadiumParts[i].built) {
+               nextIndex = i
+               break
+             }
+           }
+         }
+         
+         // Füge alle neuen Teile hinzu
+         for (let i = 0; i < sections; i++) {
+           setStadiumPart(nextIndex + i, buildInProgress.seatType)
+         }
+         
+          // Melde Fertigstellung zum Backend
+          const completeBuild = async () => {
+            try {
+              const authRaw = localStorage.getItem('fm_auth')
+              const token = authRaw ? JSON.parse(authRaw).token : null
+              const headers = {
+                'Content-Type': 'application/json',
+                ...(token && { 'X-Auth-Token': token })
+              }
 
-            await fetch(`${API_BASE}/api/v2/stadium-build/${buildInProgress.id}/complete`, {
-              method: 'PUT',
-              headers
-            })
-          } catch (err) {
-            console.error('Error completing build:', err)
+              await fetch(`${API_BASE}/api/v2/stadium-build/${buildInProgress.id}/complete`, {
+                method: 'PUT',
+                headers
+              })
+              
+              // Warte kurz, dann lade Team-Daten neu
+              setTimeout(() => {
+                window.dispatchEvent(new Event('teamUpdated'))
+              }, 500)
+            } catch (err) {
+              console.error('Error completing build:', err)
+            }
           }
-        }
-        
-        completeBuild()
-        
-        alert(`✅ Stadionausbau fertig! ${buildInProgress.totalSeats} ${buildInProgress.seatType === 'standing' ? 'Steh' : buildInProgress.seatType === 'seated' ? 'Sitz' : 'VIP'}-Plätze sind jetzt verfügbar.`)
-        setBuildInProgress(null)
-        setTimeRemaining(0)
+          
+          completeBuild()
+          
+          alert(`✅ Stadionausbau fertig! ${buildInProgress.totalSeats} ${buildInProgress.seatType === 'standing' ? 'Steh' : buildInProgress.seatType === 'seated' ? 'Sitz' : 'VIP'}-Plätze sind jetzt verfügbar.`)
+          setBuildInProgress(null)
+          setTimeRemaining(0)
       }
     }, 100)
 
@@ -320,45 +401,125 @@ export default function Infrastructure(){
                  marginBottom: '12px'
                }}>
                  <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '8px' }}>Eintrittspreise (€)</div>
-                 <div style={{
-                   display: 'flex',
-                   gap: '8px',
-                   justifyContent: 'center',
-                   flexWrap: 'wrap'
-                 }}>
-                   <input 
-                     className="input" 
-                     type="number" 
-                     value={stadiumEntryPrice.standing} 
-                     onChange={e=>setStadiumEntryPrice({...stadiumEntryPrice, standing: Number(e.target.value)})} 
-                     style={{width: '70px', fontSize: '12px'}}
-                     placeholder="Steh"
-                   />
-                   <input 
-                     className="input" 
-                     type="number" 
-                     value={stadiumEntryPrice.seated} 
-                     onChange={e=>setStadiumEntryPrice({...stadiumEntryPrice, seated: Number(e.target.value)})} 
-                     style={{width: '70px', fontSize: '12px'}}
-                     placeholder="Sitz"
-                   />
-                   <input 
-                     className="input" 
-                     type="number" 
-                     value={stadiumEntryPrice.vip} 
-                     onChange={e=>setStadiumEntryPrice({...stadiumEntryPrice, vip: Number(e.target.value)})} 
-                     style={{width: '70px', fontSize: '12px'}}
-                     placeholder="VIP"
-                   />
-                 </div>
-               </div>
-               
-               {/* Fan-Freundschaft */}
-               <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '12px' }}>
-                 Fan-Freundschaft: {fanFriendship}%
-               </div>
+                  <div style={{
+                    display: 'flex',
+                    gap: '8px',
+                    justifyContent: 'center',
+                    flexWrap: 'wrap'
+                  }}>
+                    <input 
+                      className="input" 
+                      type="number" 
+                      value={stadiumEntryPrice.standing} 
+                      onChange={e=>setStadiumEntryPrice({...stadiumEntryPrice, standing: Math.min(60, Number(e.target.value))})} 
+                      style={{width: '70px', fontSize: '12px'}}
+                      placeholder="Steh"
+                      min="0"
+                      max="60"
+                      title="Max 60€"
+                    />
+                    <input 
+                      className="input" 
+                      type="number" 
+                      value={stadiumEntryPrice.seated} 
+                      onChange={e=>setStadiumEntryPrice({...stadiumEntryPrice, seated: Math.min(100, Number(e.target.value))})} 
+                      style={{width: '70px', fontSize: '12px'}}
+                      placeholder="Sitz"
+                      min="0"
+                      max="100"
+                      title="Max 100€"
+                    />
+                    <input 
+                      className="input" 
+                      type="number" 
+                      value={stadiumEntryPrice.vip} 
+                      onChange={e=>setStadiumEntryPrice({...stadiumEntryPrice, vip: Math.min(300, Number(e.target.value))})} 
+                      style={{width: '70px', fontSize: '12px'}}
+                      placeholder="VIP"
+                      min="0"
+                      max="300"
+                      title="Max 300€"
+                    />
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'center', marginTop: 8 }}>
+                    <button
+                      className="btn primary"
+                      onClick={async () => {
+                        try {
+                          if (!team || !team.id) return
+                          const authRaw = localStorage.getItem('fm_auth')
+                          const token = authRaw ? JSON.parse(authRaw).token : null
+                          const headers = { 'Content-Type': 'application/json' }
+                          if (token) headers['X-Auth-Token'] = token
 
-               {/* Ausbauen Button */}
+                          const payload = {
+                            ticketPriceStanding: stadiumEntryPrice.standing,
+                            ticketPriceSeated: stadiumEntryPrice.seated,
+                            ticketPriceVip: stadiumEntryPrice.vip
+                          }
+
+                          const res = await fetch(`${API_BASE}/api/v2/tickets/team/${team.id}`, {
+                            method: 'PUT', headers, body: JSON.stringify(payload)
+                          })
+                          if (res.ok) {
+                            const data = await res.json()
+                            setTicketInfo(data)
+                            loadTicketInfo()
+                            alert('✅ Ticketpreise gespeichert!')
+                          } else {
+                            alert('❌ Fehler beim Speichern')
+                          }
+                        } catch (err) {
+                          console.error('Error saving ticket prices', err)
+                          alert('❌ Fehler beim Speichern der Ticketpreise')
+                        }
+                      }}
+                      style={{ fontSize: '12px', padding: '6px 12px' }}
+                    >
+                      💾 Speichern
+                    </button>
+                  </div>
+                 </div>
+                
+                {/* Fan-Freundschaft mit Farbcodierung */}
+                {ticketInfo && (
+                  <div style={{
+                    background: 'rgba(255,255,255,0.05)',
+                    padding: '12px',
+                    borderRadius: '8px',
+                    marginBottom: '12px'
+                  }}>
+                    <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '8px' }}>
+                      Fan-Freundschaft
+                    </div>
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px'
+                    }}>
+                      <div style={{
+                        fontSize: '24px',
+                        fontWeight: 'bold',
+                        color: ticketInfo.fanSatisfaction > 80 ? '#4CAF50' : 
+                               ticketInfo.fanSatisfaction >= 50 ? '#FFB800' : '#F44336'
+                      }}>
+                        {ticketInfo.fanSatisfaction}%
+                      </div>
+                      {previousFanSat !== null && previousFanSat !== ticketInfo.fanSatisfaction && (
+                        <div style={{
+                          fontSize: '14px',
+                          fontWeight: 'bold',
+                          color: ticketInfo.fanSatisfaction > previousFanSat ? '#4CAF50' : '#F44336'
+                        }}>
+                          {ticketInfo.fanSatisfaction > previousFanSat ? '+' : ''}{ticketInfo.fanSatisfaction - previousFanSat}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Ausbauen Button */}
                <button 
                  className="btn primary" 
                  onClick={() => setShowBuildModal(true)}
@@ -465,74 +626,74 @@ export default function Infrastructure(){
               </div>
             </div>
 
-            {/* Preisberechnung anzeigen */}
-            <div style={{
-              background: 'rgba(255,255,255,0.05)',
-              padding: '12px',
-              borderRadius: '8px',
-              marginBottom: '16px',
-              fontSize: '12px'
-            }}>
-              <div style={{ marginBottom: '8px' }}>
-                <strong>Kostenberechnung:</strong>
-              </div>
-              <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
-                Planungskosten: €50.000
-              </div>
-              {buildSeats <= 500 && (
-                <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
-                  {buildSeats} × €2.000 = €{(buildSeats * 2000).toLocaleString()}
-                </div>
-              )}
-              {buildSeats > 500 && buildSeats <= 2000 && (
-                <>
-                  <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
-                    500 × €2.000 = €1.000.000
-                  </div>
-                  <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
-                    {buildSeats - 500} × €1.500 = €{((buildSeats - 500) * 1500).toLocaleString()}
-                  </div>
-                </>
-              )}
-              {buildSeats > 2000 && buildSeats <= 5000 && (
-                <>
-                  <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
-                    500 × €2.000 = €1.000.000
-                  </div>
-                  <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
-                    1.500 × €1.500 = €2.250.000
-                  </div>
-                  <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
-                    {buildSeats - 2000} × €1.250 = €{((buildSeats - 2000) * 1250).toLocaleString()}
-                  </div>
-                </>
-              )}
-              {buildSeats > 5000 && (
-                <>
-                  <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
-                    500 × €2.000 = €1.000.000
-                  </div>
-                  <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
-                    1.500 × €1.500 = €2.250.000
-                  </div>
-                  <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
-                    3.000 × €1.250 = €3.750.000
-                  </div>
-                  <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
-                    {buildSeats - 5000} × €1.000 = €{((buildSeats - 5000) * 1000).toLocaleString()}
-                  </div>
-                </>
-              )}
-              <div style={{ 
-                borderTop: '1px solid rgba(255,255,255,0.1)',
-                paddingTop: '8px',
-                marginTop: '8px',
-                fontSize: '14px',
-                fontWeight: 'bold'
-              }}>
-                Gesamtkosten: €{totalCost.toLocaleString()}
-              </div>
-            </div>
+             {/* Preisberechnung anzeigen */}
+             <div style={{
+               background: 'rgba(255,255,255,0.05)',
+               padding: '12px',
+               borderRadius: '8px',
+               marginBottom: '16px',
+               fontSize: '12px'
+             }}>
+               <div style={{ marginBottom: '8px' }}>
+                 <strong>Kostenberechnung ({buildType === 'standing' ? 'Stehplatz' : buildType === 'seated' ? 'Sitzplatz' : 'VIP'}):</strong>
+               </div>
+               <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
+                 Planungskosten: €50.000{buildType !== 'standing' ? ` × ${buildType === 'seated' ? 3 : 9} = €${(50000 * (buildType === 'seated' ? 3 : 9)).toLocaleString()}` : ''}
+               </div>
+               {buildSeats <= 500 && (
+                 <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
+                   {buildSeats} × €{buildType === 'standing' ? '2.000' : buildType === 'seated' ? '6.000' : '18.000'} = €{(buildSeats * (buildType === 'standing' ? 2000 : buildType === 'seated' ? 6000 : 18000)).toLocaleString()}
+                 </div>
+               )}
+               {buildSeats > 500 && buildSeats <= 2000 && (
+                 <>
+                   <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
+                     500 × €{buildType === 'standing' ? '2.000' : buildType === 'seated' ? '6.000' : '18.000'} = €{(500 * (buildType === 'standing' ? 2000 : buildType === 'seated' ? 6000 : 18000)).toLocaleString()}
+                   </div>
+                   <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
+                     {buildSeats - 500} × €{buildType === 'standing' ? '1.500' : buildType === 'seated' ? '4.500' : '13.500'} = €{((buildSeats - 500) * (buildType === 'standing' ? 1500 : buildType === 'seated' ? 4500 : 13500)).toLocaleString()}
+                   </div>
+                 </>
+               )}
+               {buildSeats > 2000 && buildSeats <= 5000 && (
+                 <>
+                   <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
+                     500 × €{buildType === 'standing' ? '2.000' : buildType === 'seated' ? '6.000' : '18.000'} = €{(500 * (buildType === 'standing' ? 2000 : buildType === 'seated' ? 6000 : 18000)).toLocaleString()}
+                   </div>
+                   <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
+                     1.500 × €{buildType === 'standing' ? '1.500' : buildType === 'seated' ? '4.500' : '13.500'} = €{(1500 * (buildType === 'standing' ? 1500 : buildType === 'seated' ? 4500 : 13500)).toLocaleString()}
+                   </div>
+                   <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
+                     {buildSeats - 2000} × €{buildType === 'standing' ? '1.250' : buildType === 'seated' ? '3.750' : '11.250'} = €{((buildSeats - 2000) * (buildType === 'standing' ? 1250 : buildType === 'seated' ? 3750 : 11250)).toLocaleString()}
+                   </div>
+                 </>
+               )}
+               {buildSeats > 5000 && (
+                 <>
+                   <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
+                     500 × €{buildType === 'standing' ? '2.000' : buildType === 'seated' ? '6.000' : '18.000'} = €{(500 * (buildType === 'standing' ? 2000 : buildType === 'seated' ? 6000 : 18000)).toLocaleString()}
+                   </div>
+                   <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
+                     1.500 × €{buildType === 'standing' ? '1.500' : buildType === 'seated' ? '4.500' : '13.500'} = €{(1500 * (buildType === 'standing' ? 1500 : buildType === 'seated' ? 4500 : 13500)).toLocaleString()}
+                   </div>
+                   <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
+                     3.000 × €{buildType === 'standing' ? '1.250' : buildType === 'seated' ? '3.750' : '11.250'} = €{(3000 * (buildType === 'standing' ? 1250 : buildType === 'seated' ? 3750 : 11250)).toLocaleString()}
+                   </div>
+                   <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
+                     {buildSeats - 5000} × €{buildType === 'standing' ? '1.000' : buildType === 'seated' ? '3.000' : '9.000'} = €{((buildSeats - 5000) * (buildType === 'standing' ? 1000 : buildType === 'seated' ? 3000 : 9000)).toLocaleString()}
+                   </div>
+                 </>
+               )}
+               <div style={{ 
+                 borderTop: '1px solid rgba(255,255,255,0.1)',
+                 paddingTop: '8px',
+                 marginTop: '8px',
+                 fontSize: '14px',
+                 fontWeight: 'bold'
+               }}>
+                 Gesamtkosten: €{totalCost.toLocaleString()}
+               </div>
+             </div>
 
             {/* Budget Check */}
             <div style={{

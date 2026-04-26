@@ -22,7 +22,7 @@ export function GameProvider({children}){
   const [stadiumParts, setStadiumParts] = useState([])
   const stadiumBaseCapacity = 1000 // default base capacity (standing)
   // entry prices per type (standing, seated, vip)
-  const [stadiumEntryPrice, setStadiumEntryPrice] = useState({ standing: 5, seated: 10, vip: 20 })
+  const [stadiumEntryPrice, setStadiumEntryPrice] = useState({ standing: 20, seated: 40, vip: 80 })
   const [fanFriendship, setFanFriendship] = useState(100) // percent
   const [sponsors, setSponsors] = useState([])
   const [jersey, setJersey] = useState({ color: 'weiß' })
@@ -31,6 +31,7 @@ export function GameProvider({children}){
   const [transactions, setTransactions] = useState([]) // recent txns
   // league and matchday
   const [currentMatchday, setCurrentMatchday] = useState(1)
+  const [gameDay, setGameDay] = useState(0) // Inkrementiert bei jedem Spieltag-Wechsel
   const [season] = useState(1)
   const [userLeagueId, setUserLeagueId] = useState(null)
   const [userLeagueLabel, setUserLeagueLabel] = useState('Meine Liga')
@@ -347,7 +348,22 @@ export function GameProvider({children}){
       })()
     }, [team && team.id, currentFormation])
 
-    // Handle teamUpdated event (triggered after transfer market operations)
+    // Handle matchdayChanged event (triggered after Spieltag-Wechsel)
+    useEffect(()=>{
+      const handleMatchdayChange = () => {
+        log('matchdayChanged event received - new in-game day')
+        
+        // Erhöhe gameDay für neue "In-Game" Tagesfinanzen
+        setGameDay(d => d + 1)
+        // Speichere die aktuelle Zeit als letzter GameDay-Wechsel
+        localStorage.setItem('fm_lastGameDayTime', Date.now().toString())
+      }
+      
+      window.addEventListener('matchdayChanged', handleMatchdayChange)
+      return () => window.removeEventListener('matchdayChanged', handleMatchdayChange)
+    }, [])
+
+    // Handle teamUpdated event (triggered after transfer market operations, match simulation, etc.)
     useEffect(()=>{
       const handleTeamUpdate = async () => {
         if (!team || !team.id) return
@@ -374,6 +390,22 @@ export function GameProvider({children}){
             if (teamData && typeof teamData.budget === 'number') {
               log('Reloaded budget from server:', teamData.budget)
               setBalance(teamData.budget)
+            }
+            // Update team object with new capacities
+            if (teamData) {
+              setTeam(prev => ({
+                ...prev,
+                budget: teamData.budget,
+                stadiumCapacity: teamData.stadiumCapacity,
+                stadiumCapacityStanding: teamData.stadiumCapacityStanding,
+                stadiumCapacitySeated: teamData.stadiumCapacitySeated,
+                stadiumCapacityVip: teamData.stadiumCapacityVip,
+                fanSatisfaction: teamData.fanSatisfaction,
+                ticketPriceStanding: teamData.ticketPriceStanding,
+                ticketPriceSeated: teamData.ticketPriceSeated,
+                ticketPriceVip: teamData.ticketPriceVip
+              }))
+              log('Updated team object with stadium capacities:', teamData)
             }
           }
           
@@ -697,16 +729,30 @@ export function GameProvider({children}){
   }
 
   function getStadiumSummary(){
-    // Stadium size is now calculated from StadiumBuild in backend
-    // Base: 1000, plus any completed builds
-    const total = stadiumBaseCapacity || 1000
+    // Nutze stadiumCapacity vom Team wenn vorhanden
+    // Diese wird vom Backend beim Stadionausbau aktualisiert
+    let standingTotal = 1000
+    let seatedTotal = 0
+    let vipTotal = 0
+    
+    if (team) {
+      standingTotal = team.stadiumCapacityStanding || team.stadiumCapacity || 1000
+      seatedTotal = team.stadiumCapacitySeated || 0
+      vipTotal = team.stadiumCapacityVip || 0
+    }
+    
+    const total = standingTotal + seatedTotal + vipTotal
     
     return {
-      base: stadiumBaseCapacity || 1000,
-      added: 0, // Will be updated when builds complete
+      base: 1000,
+      added: total - 1000,
       total: total,
-      seats: { standing: total, seated: 0, vip: 0 },
-      parts: { standing: Math.ceil(total / 1000), seated: 0, vip: 0 },
+      seats: { standing: standingTotal, seated: seatedTotal, vip: vipTotal },
+      parts: { 
+        standing: Math.ceil(standingTotal / 1000), 
+        seated: Math.ceil(seatedTotal / 1000), 
+        vip: Math.ceil(vipTotal / 1000) 
+      },
       entryPrice: stadiumEntryPrice,
       fanFriendship
     }
@@ -725,8 +771,8 @@ export function GameProvider({children}){
      stadiumEntryPrice, setStadiumEntryPrice, fanFriendship, setFanFriendship,
      // finances
      balance, transactions, addTransaction, addSponsorObject,
-     // league and matchday
-     currentMatchday, setCurrentMatchday, season,
+      // league and matchday
+      currentMatchday, setCurrentMatchday, gameDay, season,
      // NEW: User-Liga
      userLeagueId, setUserLeagueId, userLeagueLabel, setUserLeagueLabel,
      // allow setting team from auth flow

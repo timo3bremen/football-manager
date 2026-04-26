@@ -28,6 +28,41 @@ public class TeamController {
 	private LeagueRepository leagueRepository;
 
 	/**
+	 * Gibt Team-Details zurück.
+	 * GET /api/v2/teams/{teamId}
+	 */
+	@GetMapping("/{teamId}")
+	public ResponseEntity<?> getTeam(@PathVariable Long teamId) {
+		try {
+			Team team = teamRepository.findById(teamId).orElse(null);
+			if (team == null) {
+				return ResponseEntity.notFound().build();
+			}
+
+			// Erstelle Response mit allen relevanten Daten
+			Map<String, Object> response = new HashMap<>();
+			response.put("id", team.getId());
+			response.put("name", team.getName());
+			response.put("budget", team.getBudgetAsLong());
+			response.put("activeFormation", team.getActiveFormation());
+			response.put("isCPU", team.isCPU());
+			response.put("stadiumCapacityStanding", team.getStadiumCapacityStanding());
+			response.put("stadiumCapacitySeated", team.getStadiumCapacitySeated());
+			response.put("stadiumCapacityVip", team.getStadiumCapacityVip());
+			response.put("stadiumCapacity", team.getStadiumCapacity()); // Total
+			response.put("fanSatisfaction", team.getFanSatisfaction());
+			response.put("ticketPriceStanding", team.getTicketPriceStanding());
+			response.put("ticketPriceSeated", team.getTicketPriceSeated());
+			response.put("ticketPriceVip", team.getTicketPriceVip());
+
+			return ResponseEntity.ok(response);
+		} catch (Exception e) {
+			e.printStackTrace();
+			return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
+		}
+	}
+
+	/**
 	 * Gibt Liga und Land für ein Team zurück.
 	 * GET /api/v2/teams/{teamId}/league-info
 	 */

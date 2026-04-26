@@ -27,6 +27,8 @@ public class Match {
 
 	private String status; // "scheduled", "played", "cancelled"
 
+	private Long attendance; // Zuschauerzahl (nur für Heimspiele)
+
 	public Match() {
 	}
 
@@ -91,6 +93,14 @@ public class Match {
 
 	public void setStatus(String status) {
 		this.status = status;
+	}
+
+	public Long getAttendance() {
+		return attendance;
+	}
+
+	public void setAttendance(Long attendance) {
+		this.attendance = attendance;
 	}
 
 	@Override

@@ -103,7 +103,22 @@ public class ManagerController {
     public ResponseEntity<?> getTeam(@PathVariable("id") long id){
         Team t = service.getTeamById(id);
         if (t == null) return ResponseEntity.notFound().build();
-        return ResponseEntity.ok(t);
+        // Gebe Team mit allen Stadium-Feldern zurück
+        java.util.Map<String, Object> response = new java.util.HashMap<>();
+        response.put("id", t.getId());
+        response.put("name", t.getName());
+        response.put("budget", t.getBudgetAsLong());
+        response.put("isCPU", t.isCPU());
+        response.put("activeFormation", t.getActiveFormation());
+        response.put("stadiumCapacity", t.getStadiumCapacity() != null ? t.getStadiumCapacity() : 1000L);
+        response.put("stadiumCapacityStanding", t.getStadiumCapacityStanding() != null ? t.getStadiumCapacityStanding() : 1000L);
+        response.put("stadiumCapacitySeated", t.getStadiumCapacitySeated() != null ? t.getStadiumCapacitySeated() : 0L);
+        response.put("stadiumCapacityVip", t.getStadiumCapacityVip() != null ? t.getStadiumCapacityVip() : 0L);
+        response.put("fanSatisfaction", t.getFanSatisfaction());
+        response.put("ticketPriceStanding", t.getTicketPriceStanding());
+        response.put("ticketPriceSeated", t.getTicketPriceSeated());
+        response.put("ticketPriceVip", t.getTicketPriceVip());
+        return ResponseEntity.ok(response);
     }
 
     // get team details including strength

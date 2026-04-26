@@ -3,7 +3,7 @@ import { useGame } from './GameContext'
 import YouthAcademySection from './YouthAcademySection'
 
 export default function Club(){
-  const { team, jersey, setJersey, balance, transactions, addTransaction } = useGame()
+  const { team, jersey, setJersey, balance, transactions, addTransaction, gameDay } = useGame()
   const [clubSubTab, setClubSubTab] = useState('main') // 'main', 'finances', 'academy'
   const [showSponsorModal, setShowSponsorModal] = useState(false)
   const [sponsor, setSponsor] = useState(null)
@@ -100,42 +100,45 @@ export default function Club(){
      addTransaction({ amount: sponsor.extra.payout, type:'income', desc: `${sponsor.name} - ${sponsor.extra.target}` })
    }
 
-   function getFinanceSummary(){
-     const categories = {
-       'attendance': '🎫 Zuschauereinnahmen',
-       'sponsors': '🤝 Sponsoren',
-       'salaries': '👥 Spielergehälter',
-       'infrastructure': '🏗️ Infrastruktur',
-       'interest': '💸 Zinsen',
-       'transfers': '🔄 Transfers'
-     }
+    function getFinanceSummary(){
+      const categories = {
+        'attendance': '🎫 Zuschauereinnahmen',
+        'sponsors': '🤝 Sponsoren',
+        'salaries': '👥 Spielergehälter',
+        'infrastructure': '🏗️ Infrastruktur',
+        'interest': '💸 Zinsen',
+        'transfers': '🔄 Transfers'
+      }
 
-     const today = new Date().toDateString()
-     const summary = {}
+      const summary = {}
 
-     // Initialize all categories
-     Object.keys(categories).forEach(cat => {
-       summary[cat] = { label: categories[cat], seasonAmount: 0, todayAmount: 0 }
-     })
+      // Initialize all categories
+      Object.keys(categories).forEach(cat => {
+        summary[cat] = { label: categories[cat], seasonAmount: 0, todayAmount: 0 }
+      })
 
-     // Aggregate transactions
-     transactions.forEach(t => {
-       const cat = t.category || 'other'
-       if (summary[cat]) {
-         summary[cat].seasonAmount += t.amount
-         
-         // Check if transaction is from today
-         if (t.createdAt) {
-           const transDate = new Date(t.createdAt).toDateString()
-           if (transDate === today) {
-             summary[cat].todayAmount += t.amount
-           }
-         }
-       }
-     })
+      // Aggregate transactions
+      transactions.forEach(t => {
+        const cat = t.category || 'other'
+        if (summary[cat]) {
+          summary[cat].seasonAmount += t.amount
+          
+          // Check if transaction is from today (gameDay)
+          if (t.createdAt) {
+            // Nutze gameDay als Indikator für den aktuellen In-Game-Tag
+            // Alle Transaktionen, die nach dem letzten gameDay-Wechsel erstellt wurden
+            const transDate = new Date(t.createdAt).getTime()
+            const lastGameDayTime = localStorage.getItem('fm_lastGameDayTime') ? parseInt(localStorage.getItem('fm_lastGameDayTime')) : Date.now()
+            
+            if (transDate > lastGameDayTime) {
+              summary[cat].todayAmount += t.amount
+            }
+          }
+        }
+      })
 
-     return Object.values(summary)
-   }
+      return Object.values(summary)
+    }
 
   return (
     <div>

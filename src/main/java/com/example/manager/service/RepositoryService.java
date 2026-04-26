@@ -1,5 +1,6 @@
 package com.example.manager.service;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -33,6 +34,9 @@ import com.example.manager.model.MatchEvent;
 import com.example.manager.model.Matchday;
 import com.example.manager.model.Player;
 import com.example.manager.model.Schedule;
+import com.example.manager.model.Scout;
+import com.example.manager.model.Sponsor;
+import com.example.manager.model.StadiumBuild;
 import com.example.manager.model.Team;
 import com.example.manager.model.Transaction;
 import com.example.manager.model.User;
@@ -48,8 +52,14 @@ import com.example.manager.repository.MatchRepository;
 import com.example.manager.repository.MatchdayRepository;
 import com.example.manager.repository.PlayerRepository;
 import com.example.manager.repository.ScheduleRepository;
+import com.example.manager.repository.ScoutRepository;
+import com.example.manager.repository.SponsorRepository;
+import com.example.manager.repository.StadiumBuildRepository;
+import com.example.manager.repository.StadiumPartRepository;
 import com.example.manager.repository.TeamRepository;
+import com.example.manager.repository.TransactionRepository;
 import com.example.manager.repository.UserRepository;
+import com.example.manager.repository.YouthPlayerRepository;
 import com.example.manager.util.PlayerNameGenerator;
 import com.example.manager.util.TeamNameGenerator;
 import com.example.manager.util.YouthPlayerGenerator;
@@ -97,13 +107,16 @@ public class RepositoryService {
 	private GameStateTrackingRepository gameStateTrackingRepository;
 
 	@Autowired
-	private com.example.manager.repository.SponsorRepository sponsorRepository;
+	private SponsorRepository sponsorRepository;
 
 	@Autowired
-	private com.example.manager.repository.TransactionRepository transactionRepository;
+	private TransactionRepository transactionRepository;
 
 	@Autowired
-	private com.example.manager.repository.StadiumBuildRepository stadiumBuildRepository;
+	private StadiumBuildRepository stadiumBuildRepository;
+
+	@Autowired
+	private StadiumPartRepository stadiumPartRepository;
 
 	@Autowired
 	private CupService cupService;
@@ -957,18 +970,9 @@ public class RepositoryService {
 		TeamDetailsDTO dto = new TeamDetailsDTO(teamId, team.getName(), playersInLineup, allPlayers.size(),
 				teamStrength);
 
-		// Calculate stadium capacity from completed StadiumBuilds
-		// Start with base capacity of 1000 (1 part)
-		int stadiumCapacity = 1000;
-
-		// Add capacity from all completed builds
-		List<com.example.manager.model.StadiumBuild> completedBuilds = stadiumBuildRepository
-				.findByTeamIdAndCompletedTrue(teamId);
-		for (com.example.manager.model.StadiumBuild build : completedBuilds) {
-			stadiumCapacity += build.getTotalSeats();
-		}
-
-		dto.setStadiumCapacity(stadiumCapacity);
+		// Use stadium capacity from Team model (sum of all types)
+		long totalCapacity = team.getStadiumCapacity();
+		dto.setStadiumCapacity((int) totalCapacity);
 
 		// Find league info for this team
 		List<League> allLeagues = leagueRepository.findAll();
@@ -1338,6 +1342,10 @@ public class RepositoryService {
 		trainAcademyPlayers(homeTeamId);
 		trainAcademyPlayers(awayTeamId);
 
+		// Berechne Zuschauereinnahmen und aktualisiere Fanfreundschaft (nur für
+		// HomeTeam)
+		processAttendanceRevenue(match, homeTeamId, awayTeamId, homeGoals, awayGoals, homeStrength, awayStrength);
+
 		// Get team names
 		Team homeTeam = teamRepository.findById(homeTeamId).orElse(null);
 		Team awayTeam = teamRepository.findById(awayTeamId).orElse(null);
@@ -1403,12 +1411,339 @@ public class RepositoryService {
 	}
 
 	/**
+	 * Verarbeitet Zuschauereinnahmen und Fanfreundschafts-Änderungen nach einem
+	 * Spiel Nur für das Heimteam (HomeTeam)
+	 */
+	private void processAttendanceRevenue(Match match, Long homeTeamId, Long awayTeamId, int homeGoals, int awayGoals,
+			int homeStrength, int awayStrength) {
+		try {
+			Team homeTeam = teamRepository.findById(homeTeamId).orElse(null);
+			if (homeTeam == null)
+				return;
+
+			// 1. Ermittle Auslastung basierend auf Fanfreundschaft
+			int fanSatisfaction = homeTeam.getFanSatisfaction();
+			double occupancyMin = 0.0;
+			double occupancyMax = 0.0;
+
+			if (fanSatisfaction >= 95) {
+				occupancyMin = 1.0;
+				occupancyMax = 1.0; // 100%
+			} else if (fanSatisfaction >= 85) {
+				occupancyMin = 0.90;
+				occupancyMax = 1.0; // 90-100%
+			} else if (fanSatisfaction >= 70) {
+				occupancyMin = 0.75;
+				occupancyMax = 0.90; // 75-90%
+			} else if (fanSatisfaction >= 50) {
+				occupancyMin = 0.50;
+				occupancyMax = 0.75; // 50-75%
+			} else if (fanSatisfaction >= 30) {
+				occupancyMin = 0.35;
+				occupancyMax = 0.50; // 35-50%
+			} else if (fanSatisfaction >= 10) {
+				occupancyMin = 0.10;
+				occupancyMax = 0.35; // 10-35%
+			} else {
+				occupancyMin = 0.0;
+				occupancyMax = 0.10; // 0-10%
+			}
+
+		// Zufällige Auslastung im Bereich
+		double occupancy = occupancyMin + (occupancyMax - occupancyMin) * random.nextDouble();
+
+		// 2. Lade Stadion-Kapazitäten (3 getrennte Platztypen)
+		long standingSeats = homeTeam.getStadiumCapacityStanding() != null ? homeTeam.getStadiumCapacityStanding() : 1000L;
+		long seatedSeats = homeTeam.getStadiumCapacitySeated() != null ? homeTeam.getStadiumCapacitySeated() : 0L;
+		long vipSeats = homeTeam.getStadiumCapacityVip() != null ? homeTeam.getStadiumCapacityVip() : 0L;
+		
+		// 2.5. Lade Ticketpreise
+		int ticketPriceStanding = homeTeam.getTicketPriceStanding();
+		int ticketPriceSeated = homeTeam.getTicketPriceSeated();
+		int ticketPriceVip = homeTeam.getTicketPriceVip();
+
+		// 2.6. NEUE LOGIK: Preis-basierte Auslastungs-Reduktion
+		// "Normale" Preis-Bereiche: Steh 20-40€, Sitz 40-80€, VIP 80-200€
+		// Bei zu hohen Preisen: Drastische Reduktion der Auslastung für diesen Platztyp
+		
+		double standingOccupancyModifier = calculatePriceOccupancyModifier(ticketPriceStanding, 20, 40, 60, 100);
+		double seatedOccupancyModifier = calculatePriceOccupancyModifier(ticketPriceSeated, 40, 80, 120, 200);
+		double vipOccupancyModifier = calculatePriceOccupancyModifier(ticketPriceVip, 80, 200, 300, 500);
+
+		// 3. Berechne Zuschauerzahlen mit preis-basierter Reduktion
+		// VIP-Plätze: Auslastung direkt anwenden × Preis-Modifier
+		long vipAttendance = (long) (vipSeats * occupancy * vipOccupancyModifier);
+		
+		// Steh- und Sitzplätze: Werden entsprechend Auslastung gefüllt × Preis-Modifier
+		long standingAttendance = (long) (standingSeats * occupancy * standingOccupancyModifier);
+		long seatedAttendance = (long) (seatedSeats * occupancy * seatedOccupancyModifier);
+
+		long totalAttendance = standingAttendance + seatedAttendance + vipAttendance;
+
+		// Speichere Zuschauerzahl im Match
+		match.setAttendance(totalAttendance);
+		matchRepository.save(match);
+
+		// 4. Berechne Einnahmen (bereits geladene Ticketpreise verwenden)
+		long standingRevenue = standingAttendance * ticketPriceStanding;
+		long seatedRevenue = seatedAttendance * ticketPriceSeated;
+		long vipRevenue = vipAttendance * ticketPriceVip;
+		long totalRevenue = standingRevenue + seatedRevenue + vipRevenue;
+
+		// 5. Füge Einnahmen zum Budget hinzu
+		homeTeam.setBudgetAsLong(homeTeam.getBudgetAsLong() + totalRevenue);
+		
+		// 6. Speichere als Transaktion
+		Transaction transaction = new Transaction(homeTeamId, totalRevenue, "income",
+				"Zuschauereinnahmen (" + totalAttendance + " Zuschauer)", "attendance");
+		transactionRepository.save(transaction);
+
+		System.out.println("[Attendance] Team " + homeTeam.getName() + ": " + totalAttendance 
+				+ " Zuschauer (Steh: " + standingAttendance + ", Sitz: " + seatedAttendance + ", VIP: " + vipAttendance 
+				+ ") → " + totalRevenue + "€ Einnahmen");
+		System.out.println("[Attendance] Auslastung: " + Math.round(occupancy * 100) + "%, Preis-Modifier: Steh=" 
+				+ Math.round(standingOccupancyModifier * 100) + "%, Sitz=" + Math.round(seatedOccupancyModifier * 100) 
+				+ "%, VIP=" + Math.round(vipOccupancyModifier * 100) + "%");
+		System.out.println("[Attendance] Ticketpreise: Steh=" + ticketPriceStanding + "€, Sitz=" + ticketPriceSeated 
+				+ "€, VIP=" + ticketPriceVip + "€");
+
+		// 7. Aktualisiere Fanfreundschaft basierend auf Spielergebnis und Ticketpreisen
+			updateFanSatisfaction(homeTeam, homeGoals, awayGoals, homeStrength, awayStrength);
+
+			teamRepository.save(homeTeam);
+
+		} catch (Exception e) {
+			System.err.println(
+					"[Attendance] Fehler bei Zuschauereinnahmen für Team " + homeTeamId + ": " + e.getMessage());
+			e.printStackTrace();
+		}
+	}
+
+	/**
+	 * Berechnet einen Auslastungs-Modifier basierend auf Ticketpreis
+	 * 
+	 * @param price Aktueller Ticketpreis
+	 * @param normalMin Untere Grenze des normalen Preisbereichs (z.B. 20€ für Stehplatz)
+	 * @param normalMax Obere Grenze des normalen Preisbereichs (z.B. 40€ für Stehplatz)
+	 * @param highMax Obere Grenze für "hohe" Preise (z.B. 60€)
+	 * @param extremeMax Obere Grenze für "extreme" Preise (z.B. 100€)
+	 * @return Modifier zwischen 0.0 und 1.0 (oder höher für günstige Preise)
+	 */
+	private double calculatePriceOccupancyModifier(int price, int normalMin, int normalMax, int highMax, int extremeMax) {
+		// Sehr günstig (unter normalMin): Leichter Bonus (+5-10%)
+		if (price < normalMin / 2) {
+			return 1.10; // +10% Auslastung
+		} else if (price < normalMin) {
+			return 1.05; // +5% Auslastung
+		}
+		
+		// Normaler Bereich (normalMin bis normalMax): Volle Auslastung
+		if (price <= normalMax) {
+			return 1.0; // 100% normale Auslastung
+		}
+		
+		// Leicht erhöht (normalMax bis highMax): Leichte Reduktion
+		if (price <= highMax) {
+			// Linear von 1.0 bis 0.6 (40% Reduktion)
+			double factor = (double) (price - normalMax) / (highMax - normalMax);
+			return 1.0 - (factor * 0.4);
+		}
+		
+		// Hoch (highMax bis extremeMax): Starke Reduktion
+		if (price <= extremeMax) {
+			// Linear von 0.6 bis 0.2 (80% Reduktion)
+			double factor = (double) (price - highMax) / (extremeMax - highMax);
+			return 0.6 - (factor * 0.4);
+		}
+		
+		// Extrem hoch (über extremeMax): Drastische Reduktion
+		if (price <= extremeMax * 2) {
+			// Linear von 0.2 bis 0.05 (95% Reduktion)
+			double factor = (double) (price - extremeMax) / extremeMax;
+			return Math.max(0.05, 0.2 - (factor * 0.15));
+		}
+		
+		// Völlig unrealistisch (über extremeMax * 2): Minimale Auslastung
+		return 0.01; // Nur 1% kommen noch
+	}
+
+	/**
+	 * Aktualisiert die Fanfreundschaft basierend auf Spielergebnis, Gegner-Stärke
+	 * und Ticketpreisen
+	 */
+	private void updateFanSatisfaction(Team homeTeam, int homeGoals, int awayGoals, int homeStrength,
+			int awayStrength) {
+		int currentSatisfaction = homeTeam.getFanSatisfaction();
+		int strengthDiff = homeStrength - awayStrength;
+
+		// 1. Basis-Änderung durch Spielergebnis
+		int satisfactionChange = 0;
+
+		if (homeGoals > awayGoals) {
+			// Sieg
+			if (strengthDiff > 150) {
+				// Sieg gegen deutlich schwächeren Gegner: +1 bis +3
+				satisfactionChange = 1 + random.nextInt(3);
+			} else if (strengthDiff > 75) {
+				// Sieg gegen etwas schwächeren Gegner: +2 bis +4
+				satisfactionChange = 2 + random.nextInt(3);
+			} else if (strengthDiff > -75) {
+				// Sieg gegen ebenbürtigen Gegner: +3 bis +5
+				satisfactionChange = 3 + random.nextInt(3);
+			} else if (strengthDiff > -150) {
+				// Sieg gegen etwas stärkeren Gegner: +4 bis +6
+				satisfactionChange = 4 + random.nextInt(3);
+			} else {
+				// Sieg gegen deutlich stärkeren Gegner: +5 bis +8
+				satisfactionChange = 5 + random.nextInt(4);
+			}
+		} else if (homeGoals < awayGoals) {
+			// Niederlage
+			if (strengthDiff > 150) {
+				// Niederlage gegen deutlich schwächeren Gegner: -5 bis -8
+				satisfactionChange = -8 + random.nextInt(4);
+			} else if (strengthDiff > 75) {
+				// Niederlage gegen etwas schwächeren Gegner: -4 bis -6
+				satisfactionChange = -6 + random.nextInt(3);
+			} else if (strengthDiff > -75) {
+				// Niederlage gegen ebenbürtigen Gegner: -3 bis -5
+				satisfactionChange = -5 + random.nextInt(3);
+			} else if (strengthDiff > -150) {
+				// Niederlage gegen etwas stärkeren Gegner: -2 bis -4
+				satisfactionChange = -4 + random.nextInt(3);
+			} else {
+				// Niederlage gegen deutlich stärkeren Gegner: -1 bis -3
+				satisfactionChange = -3 + random.nextInt(3);
+			}
+		} else {
+			// Unentschieden: -1 bis +1 (neutral)
+			satisfactionChange = -1 + random.nextInt(3);
+		}
+
+		// Prüfe ob Gegner ein Top-Team ist (Platz 1-4 in der Liga)
+		boolean isTopTeamOpponent = isTopTeamInLeague(homeTeam.getId(), awayStrength);
+
+		// 2. Modifikation durch Ticketpreise (fließende Übergänge)
+		int ticketPriceStanding = homeTeam.getTicketPriceStanding();
+		int ticketPriceSeated = homeTeam.getTicketPriceSeated();
+		int ticketPriceVip = homeTeam.getTicketPriceVip();
+
+		// Top-Team Bonus: +20% Toleranz bei hohen Preisen
+		double topTeamBonus = isTopTeamOpponent ? 1.2 : 1.0;
+
+		// STEHPLÄTZE: Neutral 20-40€, Positiv <20€, Negativ >40€
+		double standingImpact = calculatePriceFanImpact(ticketPriceStanding, 20, 40, 60, topTeamBonus);
+		
+		// SITZPLÄTZE: Neutral 40-60€, Positiv <40€, Negativ >60€
+		double seatedImpact = calculatePriceFanImpact(ticketPriceSeated, 40, 60, 100, topTeamBonus);
+		
+		// VIP: Neutral 80-150€, Positiv <80€, Negativ >150€
+		double vipImpact = calculatePriceFanImpact(ticketPriceVip, 80, 150, 300, topTeamBonus);
+
+		// Summiere alle Preis-Impacts (gerundet)
+		int priceImpact = (int) Math.round(standingImpact + seatedImpact + vipImpact);
+		satisfactionChange += priceImpact;
+
+		// 3. Wende Änderung an
+		int newSatisfaction = currentSatisfaction + satisfactionChange;
+		homeTeam.setFanSatisfaction(newSatisfaction); // Clamp automatisch auf 0-100
+
+		String resultText = homeGoals > awayGoals ? "Sieg" : homeGoals < awayGoals ? "Niederlage" : "Unentschieden";
+		String topTeamInfo = isTopTeamOpponent ? " [vs Top-Team +20% Toleranz]" : "";
+		System.out.println("[FanSatisfaction] Team " + homeTeam.getName() + ": " + resultText + topTeamInfo
+				+ " → Fanfreundschaft " + currentSatisfaction + "% → " + homeTeam.getFanSatisfaction() + "% ("
+				+ (satisfactionChange > 0 ? "+" : "") + satisfactionChange + ")");
+		System.out.println("[FanSatisfaction] Preis-Impact: Steh=" + String.format("%.1f", standingImpact) 
+				+ ", Sitz=" + String.format("%.1f", seatedImpact) + ", VIP=" + String.format("%.1f", vipImpact));
+	}
+
+	/**
+	 * Berechnet den Fanfreundschafts-Impact eines Ticketpreises (fließender Übergang)
+	 * 
+	 * @param price Aktueller Preis
+	 * @param neutralMin Untere Grenze des neutralen Bereichs (z.B. 20€ für Stehplatz)
+	 * @param neutralMax Obere Grenze des neutralen Bereichs (z.B. 40€ für Stehplatz)
+	 * @param maxPrice Maximaler erlaubter Preis (z.B. 60€)
+	 * @param topTeamBonus Multiplier für Top-Team Spiele (1.2 = +20% Toleranz)
+	 * @return Impact auf Fanfreundschaft (-3.0 bis +3.0)
+	 */
+	private double calculatePriceFanImpact(int price, int neutralMin, int neutralMax, int maxPrice, double topTeamBonus) {
+		// Wende Top-Team Bonus an: Erhöht neutralMax
+		int adjustedNeutralMax = (int) (neutralMax * topTeamBonus);
+		
+		// Neutraler Bereich: Keine Änderung
+		if (price >= neutralMin && price <= adjustedNeutralMax) {
+			return 0.0;
+		}
+		
+		// Positiver Bereich (unter neutralMin): Je günstiger, desto besser
+		// Fließender Übergang von neutralMin bis 0€
+		if (price < neutralMin) {
+			// 0€ → +3.0, neutralMin → 0.0 (linear)
+			double factor = (double) (neutralMin - price) / neutralMin;
+			return Math.min(3.0, factor * 3.0);
+		}
+		
+		// Negativer Bereich (über adjustedNeutralMax): Je teurer, desto schlechter
+		// Fließender Übergang von adjustedNeutralMax bis maxPrice
+		if (price > adjustedNeutralMax) {
+			// adjustedNeutralMax → 0.0, maxPrice → -3.0 (linear)
+			double factor = (double) (price - adjustedNeutralMax) / (maxPrice - adjustedNeutralMax);
+			return Math.max(-3.0, -factor * 3.0);
+		}
+		
+		return 0.0;
+	}
+
+	/**
+	 * Prüft ob das Auswärtsteam ein Top-Team ist (Platz 1-4 in der Liga)
+	 */
+	private boolean isTopTeamInLeague(Long homeTeamId, int awayStrength) {
+		try {
+			// Finde Liga des Heimteams
+			List<League> allLeagues = leagueRepository.findAll();
+			Long homeLeagueId = null;
+			
+			for (League league : allLeagues) {
+				for (LeagueSlot slot : league.getSlots()) {
+					if (slot.getTeamId() != null && slot.getTeamId().equals(homeTeamId)) {
+						homeLeagueId = league.getId();
+						break;
+					}
+				}
+				if (homeLeagueId != null) break;
+			}
+			
+			if (homeLeagueId == null) return false;
+			
+			// Hole Tabelle und prüfe ob awayTeam in Top 4 ist
+			List<LeagueStandingsDTO> standings = getLeagueStandingsByLeagueId(homeLeagueId);
+			
+			// Prüfe ob das Auswärtsteam in den Top 4 ist (basierend auf Stärke)
+			for (LeagueStandingsDTO standing : standings) {
+				if (standing.getPosition() <= 4) {
+					// Berechne Stärke dieses Teams
+					int teamStrength = calculateTeamStrength(standing.getTeamId());
+					// Wenn awayStrength in der Nähe eines Top-4 Teams ist, ist es ein Top-Team
+					if (Math.abs(teamStrength - awayStrength) < 50) {
+						return true;
+					}
+				}
+			}
+			
+			return false;
+		} catch (Exception e) {
+			return false; // Bei Fehler: Kein Top-Team Bonus
+		}
+	}
+
+	/**
 	 * Verarbeitet Sponsorenzahlungen nach einem Spiel - Antritt (appearance): Wird
 	 * immer gezahlt - Sieg (win): Wird nur bei Sieg gezahlt
 	 */
 	private void processSponsorPayouts(Long teamId, boolean won) {
 		try {
-			com.example.manager.model.Sponsor sponsor = sponsorRepository.findByTeamId(teamId).orElse(null);
+			Sponsor sponsor = sponsorRepository.findByTeamId(teamId).orElse(null);
 			if (sponsor == null) {
 				return; // Kein Sponsor für dieses Team
 			}
@@ -1624,10 +1959,15 @@ public class RepositoryService {
 		// Sortiere Events nach Minute
 		eventDTOs.sort((a, b) -> Integer.compare(a.getMinute(), b.getMinute()));
 
-		return new MatchReportDTO(matchId, homeTeamId, awayTeamId, homeTeamName, awayTeamName, match.getHomeGoals(),
-				match.getAwayGoals(), match.getHomeGoals() > match.getAwayGoals() ? "home"
+		MatchReportDTO report = new MatchReportDTO(matchId, homeTeamId, awayTeamId, homeTeamName, awayTeamName,
+				match.getHomeGoals(), match.getAwayGoals(), match.getHomeGoals() > match.getAwayGoals() ? "home"
 						: match.getAwayGoals() > match.getHomeGoals() ? "away" : "draw",
 				eventDTOs);
+
+		// Füge Zuschauerzahl hinzu
+		report.setAttendance(match.getAttendance());
+
+		return report;
 	}
 
 	/**
@@ -2030,11 +2370,89 @@ public class RepositoryService {
 	}
 
 	/**
+	 * Führt tägliche Aufgaben durch wenn "Nächster Tag" geklickt wird: 1. Löscht
+	 * alle Transaktionen von heute (Tagesfinanzen zurückgesetzt) 2. Verkürzt alle
+	 * Stadionausbauten um 24h oder schließt sie ab wenn < 24h übrig
+	 */
+	@Transactional
+	private void processDailyTasks() {
+		try {
+			System.out.println("[RepositoryService] 📅 Verarbeite tägliche Tasks beim Tag-Wechsel...");
+
+		// 1. Lösche nur HEUTIGE Tagesfinanzen (Sponsoren, Zinsen)
+		// NICHT mehr: Zuschauereinnahmen (bleiben für die Saison)
+		// NICHT: Infrastruktur, Transfers, Spielergehälter
+		LocalDateTime now = LocalDateTime.now();
+		LocalDateTime startOfDay = now.withHour(0).withMinute(0).withSecond(0).withNano(0);
+		LocalDateTime endOfDay = now.withHour(23).withMinute(59).withSecond(59).withNano(999999999);
+
+		List<Transaction> transactions = transactionRepository.findAll();
+		List<Transaction> todaysTransactions = new ArrayList<>();
+
+		for (Transaction t : transactions) {
+			if (t.getCreatedAt() != null && t.getCreatedAt().isAfter(startOfDay)
+					&& t.getCreatedAt().isBefore(endOfDay)) {
+				// Lösche nur Sponsoren und Zinsen-Transaktionen (NICHT Zuschauereinnahmen!)
+				String cat = t.getCategory() != null ? t.getCategory() : "";
+				if (cat.equals("sponsors") || cat.equals("interest")) {
+					todaysTransactions.add(t);
+				}
+			}
+		}
+
+		if (!todaysTransactions.isEmpty()) {
+			System.out.println("[RepositoryService] 💳 Lösche " + todaysTransactions.size()
+					+ " Tages-Transaktionen (Sponsoren, Zinsen) - Zuschauereinnahmen bleiben!");
+			transactionRepository.deleteAll(todaysTransactions);
+		}
+
+		// 2. Verkürze Stadionausbauten um 24h oder schließe sie ab
+		List<StadiumBuild> stadiumBuilds = stadiumBuildRepository.findAll();
+
+		for (StadiumBuild build : stadiumBuilds) {
+			if (build.getCompleted())
+				continue; // Überspringe bereits abgeschlossene
+
+			LocalDateTime endTime = build.getEndTime();
+			// Berechne verbleibende Zeit
+			if (endTime.isBefore(now)) {
+				// Bereits abgelaufen - markiere als komplett
+				System.out.println("[RepositoryService] 🏗️ Stadionausbau ID " + build.getId() + " ist fertig");
+				build.setCompleted(true);
+				// Stadium capacity is updated by completeBuild endpoint
+			} else if (endTime.isBefore(now.plusDays(1))) {
+				// Weniger als 1 Tag übrig - schließe jetzt ab
+				System.out.println(
+						"[RepositoryService] ⚡ Stadionausbau ID " + build.getId() + " mit < 24h abgeschlossen");
+				build.setCompleted(true);
+				// Stadium capacity is updated by completeBuild endpoint
+			} else {
+				// Mehr als 1 Tag übrig - verkürze um 24 Stunden
+				LocalDateTime newEndTime = endTime.minusDays(1);
+				System.out.println("[RepositoryService] ⏱️ Stadionausbau ID " + build.getId() + " um 24h verkürzt");
+				build.setEndTime(newEndTime);
+			}
+
+			stadiumBuildRepository.save(build);
+			}
+
+			System.out.println("[RepositoryService] ✅ Tägliche Tasks abgeschlossen");
+
+		} catch (Exception e) {
+			System.err.println("[RepositoryService] ❌ Fehler bei Tägliche Tasks: " + e.getMessage());
+			e.printStackTrace();
+		}
+	}
+
+	/**
 	 * Simuliert alle ausstehenden Spiele des aktuellen Spieltags (für ALLE Ligen)
 	 * und erhöht dann den aktuellen Spieltag
 	 */
 	@Transactional
 	public Map<String, Object> advanceToNextMatchday() {
+		// Verarbeite tägliche Tasks am Anfang
+		processDailyTasks();
+
 		int currentMatchday = getCurrentMatchday();
 
 		// Finde ALLE Matchdays für den aktuellen Spieltag (alle Ligen!)
@@ -2262,7 +2680,7 @@ public class RepositoryService {
 				}
 
 				// Prüfe ob Team einen Sponsor hat
-				com.example.manager.model.Sponsor sponsor = sponsorRepository.findByTeamId(teamId).orElse(null);
+				Sponsor sponsor = sponsorRepository.findByTeamId(teamId).orElse(null);
 
 				// Klassenerhalt-Bonus (Platz 1-8)
 				if (position >= 1 && position <= 8 && sponsor != null && sponsor.getSurvivePayout() > 0) {
@@ -2523,10 +2941,10 @@ public class RepositoryService {
 	// ==================== SCOUTING SYSTEM ====================
 
 	@Autowired
-	private com.example.manager.repository.ScoutRepository scoutRepository;
+	private ScoutRepository scoutRepository;
 
 	@Autowired
-	private com.example.manager.repository.YouthPlayerRepository youthPlayerRepository;
+	private YouthPlayerRepository youthPlayerRepository;
 
 	/**
 	 * Startet einen Scout für ein Team in eine Region für X Tage Kostet 50.000€ pro
@@ -2547,7 +2965,7 @@ public class RepositoryService {
 		teamRepository.save(team);
 
 		// Erstelle Scout
-		com.example.manager.model.Scout scout = new com.example.manager.model.Scout(teamId, region, days);
+		Scout scout = new Scout(teamId, region, days);
 		scoutRepository.save(scout);
 
 		System.out.println("[Scouting] Team " + teamId + " startet Scout in " + region + " für " + days
@@ -2557,7 +2975,7 @@ public class RepositoryService {
 	/**
 	 * Liefert den aktiven Scout eines Teams (falls vorhanden)
 	 */
-	public com.example.manager.model.Scout getActiveScout(Long teamId) {
+	public Scout getActiveScout(Long teamId) {
 		return scoutRepository.findByTeamIdAndIsActive(teamId, true).orElse(null);
 	}
 
@@ -2566,7 +2984,7 @@ public class RepositoryService {
 	 * Ländern aus der Region des Scouts
 	 */
 	public YouthPlayer generateScoutedPlayer(Long scoutId) {
-		com.example.manager.model.Scout scout = scoutRepository.findById(scoutId).orElse(null);
+		Scout scout = scoutRepository.findById(scoutId).orElse(null);
 		if (scout == null || !scout.isActive())
 			return null;
 
@@ -2587,7 +3005,7 @@ public class RepositoryService {
 	 * Verpflichtet einen Jugenspieler zum Kader
 	 */
 	public void recruitYouthPlayer(Long youthPlayerId) {
-		com.example.manager.model.YouthPlayer youth = youthPlayerRepository.findById(youthPlayerId).orElse(null);
+		YouthPlayer youth = youthPlayerRepository.findById(youthPlayerId).orElse(null);
 		if (youth == null || youth.getAge() < 17) {
 			throw new IllegalArgumentException("Nur 17-18 Jährige können zum Kader hinzugefügt werden!");
 		}
@@ -2662,7 +3080,7 @@ public class RepositoryService {
 	 * Spieler kommt in die Akademie
 	 */
 	public void recruitToAcademy(Long youthPlayerId) {
-		com.example.manager.model.YouthPlayer youth = youthPlayerRepository.findById(youthPlayerId).orElse(null);
+		YouthPlayer youth = youthPlayerRepository.findById(youthPlayerId).orElse(null);
 		if (youth == null || youth.getAge() > 16) {
 			throw new IllegalArgumentException("Nur 15-16 Jährige können zur Akademie hinzugefügt werden!");
 		}
@@ -2679,7 +3097,7 @@ public class RepositoryService {
 	 * Lehnt einen Jugenspieler ab und löscht ihn
 	 */
 	public void rejectYouthPlayer(Long youthPlayerId) {
-		com.example.manager.model.YouthPlayer youth = youthPlayerRepository.findById(youthPlayerId).orElse(null);
+		YouthPlayer youth = youthPlayerRepository.findById(youthPlayerId).orElse(null);
 		if (youth == null) {
 			throw new IllegalArgumentException("Spieler nicht gefunden!");
 		}
@@ -2693,7 +3111,7 @@ public class RepositoryService {
 	/**
 	 * Gibt alle Jugenspieler in der Akademie für ein Team zurück
 	 */
-	public List<com.example.manager.model.YouthPlayer> getYouthAcademy(Long teamId) {
+	public List<YouthPlayer> getYouthAcademy(Long teamId) {
 		return youthPlayerRepository.findByTeamIdAndIsInAcademyTrue(teamId);
 	}
 
@@ -2701,7 +3119,7 @@ public class RepositoryService {
 	 * Gibt alle gescouteten Spieler für ein Team zurück (zum Anzeigen im
 	 * Scout-Interface) Nur unverpflichtete Spieler werden angezeigt
 	 */
-	public List<com.example.manager.model.YouthPlayer> getScoutedPlayers(Long teamId) {
+	public List<YouthPlayer> getScoutedPlayers(Long teamId) {
 		return youthPlayerRepository.findByTeamId(teamId).stream().filter(p -> !p.isRecruited()) // Nur unverpflichtete
 				.toList();
 	}
@@ -2712,14 +3130,13 @@ public class RepositoryService {
 	 */
 	public void trainAcademyPlayers(Long teamId) {
 		try {
-			List<com.example.manager.model.YouthPlayer> academyPlayers = youthPlayerRepository
-					.findByTeamIdAndIsInAcademyTrue(teamId);
+			List<YouthPlayer> academyPlayers = youthPlayerRepository.findByTeamIdAndIsInAcademyTrue(teamId);
 
 			Random rand = new Random();
 			int trainedCount = 0;
 			int skillsImproved = 0;
 
-			for (com.example.manager.model.YouthPlayer player : academyPlayers) {
+			for (YouthPlayer player : academyPlayers) {
 				int skillsBefore = getAcademySkillCount(player);
 
 				// Trainiere den Spieler
@@ -2745,7 +3162,7 @@ public class RepositoryService {
 	/**
 	 * Zählt die Summe aller Skills eines Akademie-Spielers
 	 */
-	private int getAcademySkillCount(com.example.manager.model.YouthPlayer player) {
+	private int getAcademySkillCount(YouthPlayer player) {
 		return player.getPace() + player.getDribbling() + player.getBallControl() + player.getShooting()
 				+ player.getTackling() + player.getSliding() + player.getHeading() + player.getCrossing()
 				+ player.getPassing() + player.getAwareness() + player.getJumping() + player.getStamina()
@@ -2811,20 +3228,20 @@ public class RepositoryService {
 			}
 
 			// SCHRITT 3: Verarbeite Jugenspieler
-			List<com.example.manager.model.YouthPlayer> youthPlayers = youthPlayerRepository.findAll();
+			List<YouthPlayer> youthPlayers = youthPlayerRepository.findAll();
 
 			// Erst alle altern
-			for (com.example.manager.model.YouthPlayer youth : youthPlayers) {
+			for (YouthPlayer youth : youthPlayers) {
 				youth.setAge(youth.getAge() + 1);
 			}
 			youthPlayerRepository.saveAll(youthPlayers);
 			System.out.println("[EndSeason] " + youthPlayers.size() + " Jugenspieler um 1 Jahr gealtert");
 
 			// Dann Akademie-Spieler die 17 werden zum Kader befördern
-			List<com.example.manager.model.YouthPlayer> toPromote = youthPlayers.stream()
+			List<YouthPlayer> toPromote = youthPlayers.stream()
 					.filter(y -> y.getAge() == 17 && y.isInAcademy() && !y.isRecruited()).toList();
 
-			for (com.example.manager.model.YouthPlayer youth : toPromote) {
+			for (YouthPlayer youth : toPromote) {
 				long salary = 100000L / 30; // Pro-Spiel Gehalt
 				// Erstelle Spieler
 				Player newPlayer = new Player(youth.getName(), youth.getRating(), youth.getOverallPotential(), 0,

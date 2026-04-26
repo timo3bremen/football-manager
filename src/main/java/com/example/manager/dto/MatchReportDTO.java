@@ -15,6 +15,7 @@ public class MatchReportDTO {
 	private int awayGoals;
 	private String result; // "home", "away", "draw"
 	private List<MatchEventDTO> events;
+	private Long attendance; // Zuschauerzahl
 
 	public MatchReportDTO() {
 	}
@@ -103,5 +104,13 @@ public class MatchReportDTO {
 
 	public void setEvents(List<MatchEventDTO> events) {
 		this.events = events;
+	}
+
+	public Long getAttendance() {
+		return attendance;
+	}
+
+	public void setAttendance(Long attendance) {
+		this.attendance = attendance;
 	}
 }
