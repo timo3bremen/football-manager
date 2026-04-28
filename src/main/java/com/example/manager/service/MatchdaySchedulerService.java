@@ -8,9 +8,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 /**
- * Service für zeitabhängige Spieltag-Simulation. 
- * Startet jeden Tag um 18:51 Uhr eine Live-Simulation für 270 Sekunden (4,5 Minuten).
- * User können während der Simulation einsteigen und live Events mitverfolgen.
+ * Service für zeitabhängige Spieltag-Simulation. Startet jeden Tag um 18:51 Uhr
+ * eine Live-Simulation für 270 Sekunden (4,5 Minuten). User können während der
+ * Simulation einsteigen und live Events mitverfolgen.
  */
 @Service
 @EnableScheduling
@@ -18,14 +18,14 @@ public class MatchdaySchedulerService {
 
 	@Autowired
 	private RepositoryService repositoryService;
-	
+
 	@Autowired
 	private LiveMatchSimulationService liveSimulationService;
 
 	/**
-	 * Scheduled Task: Läuft jeden Tag um 18:51 Uhr 
-	 * Startet die Live-Simulation für 270 Sekunden (4,5 Minuten)
-	 * User können auch später beitreten und die laufende Simulation sehen
+	 * Scheduled Task: Läuft jeden Tag um 18:51 Uhr Startet die Live-Simulation für
+	 * 270 Sekunden (4,5 Minuten) User können auch später beitreten und die laufende
+	 * Simulation sehen
 	 */
 	@Scheduled(cron = "0 51 18 * * ?") // 18:51 Uhr jeden Tag
 	public void advanceMatchdayDaily() {

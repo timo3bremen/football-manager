@@ -4,6 +4,8 @@ import React, { useState, useEffect, useRef } from 'react';
  * Substitution-Panel für Live-Match
  * Erlaubt User, Spieler während der Simulation auszuwechseln
  */
+const API_BASE = 'http://192.168.178.21:8080';
+
 export default function SubstitutionPanel({ token, teamId, matchId, isSimulationRunning }) {
 	const [lineup, setLineup] = useState([]);
 	const [bench, setBench] = useState([]);
@@ -19,7 +21,7 @@ export default function SubstitutionPanel({ token, teamId, matchId, isSimulation
 			const authHeader = { 'X-Auth-Token': token };
 			
 			// Lade Team-Info um ActiveFormation zu erhalten
-			const teamRes = await fetch(`http://localhost:8080/api/teams/${teamId}`, {
+			const teamRes = await fetch(`${API_BASE}/api/teams/${teamId}`, {
 				headers: authHeader
 			});
 			if (!teamRes.ok) {
@@ -29,7 +31,7 @@ export default function SubstitutionPanel({ token, teamId, matchId, isSimulation
 			const formation = teamData.activeFormation || '4-4-2';
 			
 			// Lade alle Spieler des Teams
-			const playersRes = await fetch(`http://localhost:8080/api/v2/players/team/${teamId}`, {
+			const playersRes = await fetch(`${API_BASE}/api/v2/players/team/${teamId}`, {
 				headers: authHeader
 			});
 			if (!playersRes.ok) {
@@ -47,7 +49,7 @@ export default function SubstitutionPanel({ token, teamId, matchId, isSimulation
 			// Versuche echte Lineup-Daten vom Backend zu laden
 			try {
 				const lineupRes = await fetch(
-					`http://localhost:8080/api/lineups/${teamId}/${formation}`,
+					`${API_BASE}/api/lineups/${teamId}/${formation}`,
 					{ headers: authHeader }
 				);
 				
@@ -189,7 +191,7 @@ export default function SubstitutionPanel({ token, teamId, matchId, isSimulation
 		setSubstituting(true);
 		
 		try {
-			const res = await fetch('http://localhost:8080/api/v2/live-simulation/substitute', {
+			const res = await fetch(`${API_BASE}/api/v2/live-simulation/substitute`, {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',

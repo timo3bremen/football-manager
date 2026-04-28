@@ -137,6 +137,38 @@ export default function LiveMatchSimulation({ token, teamId }) {
 				if (selectedMatch) {
 					client.subscribe(`/topic/live-match/${selectedMatch}`, (message) => {
 						const event = JSON.parse(message.body);
+						
+						// Prüfe ob es ein simulation_complete Event ist
+						if (event.type === 'simulation_complete') {
+							console.log('🏁 Simulation abgeschlossen, lade Daten neu...');
+							
+							// Lade Nachrichten aus der DB neu
+							fetch(`${API_BASE}/api/v2/live-simulation/messages/${selectedMatch}`, {
+								headers: { 'X-Auth-Token': token }
+							})
+							.then(res => res.json())
+							.then(messages => {
+								if (messages && messages.length > 0) {
+									console.log('✅ ' + messages.length + ' Nachrichten nach Abschluss geladen');
+									eventsRef.current = messages;
+									setEvents(messages);
+									sessionStorage.setItem('liveMatchEvents', JSON.stringify(messages));
+								}
+							})
+							.catch(err => console.error('Fehler beim Nachladen:', err));
+							
+							// Setze simulationStarted auf false, OHNE Events zu löschen
+							setSimulationStarted(false);
+							sessionStorage.removeItem('simulationStarted');
+							sessionStorage.removeItem('simulationStartTime');
+							
+							// Trigger teamUpdated event um Finanzen und Balance neu zu laden
+							console.log('💰 Triggere teamUpdated Event um Finanzen neu zu laden');
+							window.dispatchEvent(new CustomEvent('teamUpdated'));
+							
+							return; // Nicht als normales Event behandeln
+						}
+						
 						// Speichere in Ref um Events persistent zu halten
 						eventsRef.current = [...eventsRef.current, event];
 						setEvents([...eventsRef.current]);
@@ -160,7 +192,7 @@ export default function LiveMatchSimulation({ token, teamId }) {
 				stompClientRef.current.deactivate();
 			}
 		};
-	}, [selectedMatch]);
+	}, [selectedMatch, token]);
 	
 	// Lade Status alle 1 Sekunde (nur wenn Simulation läuft)
 	useEffect(() => {
@@ -180,16 +212,13 @@ export default function LiveMatchSimulation({ token, teamId }) {
 				
 				console.log('🔍 Prüfe Simulation: isStillRunning=', isStillRunning, 'simulationStarted=', simulationStarted);
 				
-				// Wenn Simulation gerade beendet wurde, lösche SessionStorage
+				// Wenn Simulation gerade beendet wurde, setze Flag zurück OHNE Events zu löschen
 				if (simulationStarted && !isStillRunning) {
-					console.log('⏹️ Simulation beendet, räume auf...');
+					console.log('⏹️ Simulation beendet, behalte Events...');
 					setSimulationStarted(false);
-					eventsRef.current = [];
-					setEvents([]);
-					sessionStorage.removeItem('liveMatchEvents');
 					sessionStorage.removeItem('simulationStarted');
 					sessionStorage.removeItem('simulationStartTime');
-					sessionStorage.removeItem('simulationTeamId');
+					// Events NICHT löschen - sie bleiben sichtbar!
 				}
 			} catch (err) {
 				console.error('Fehler beim Laden des Status:', err);

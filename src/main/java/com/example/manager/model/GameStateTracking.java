@@ -23,6 +23,9 @@ public class GameStateTracking {
 	@Column(name = "last_simulation_time")
 	private long lastSimulationTime = 0;
 
+	@Column(name = "last_interest_matchday")
+	private int lastInterestMatchday = 0;
+
 	public GameStateTracking() {
 	}
 
@@ -48,5 +51,13 @@ public class GameStateTracking {
 
 	public void setLastSimulationTime(long lastSimulationTime) {
 		this.lastSimulationTime = lastSimulationTime;
+	}
+
+	public int getLastInterestMatchday() {
+		return lastInterestMatchday;
+	}
+
+	public void setLastInterestMatchday(int lastInterestMatchday) {
+		this.lastInterestMatchday = lastInterestMatchday;
 	}
 }

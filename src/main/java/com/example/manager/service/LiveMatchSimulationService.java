@@ -33,6 +33,7 @@ import com.example.manager.repository.MatchdayRepository;
 import com.example.manager.repository.PlayerRepository;
 import com.example.manager.repository.SimulationMessageRepository;
 import com.example.manager.repository.TeamRepository;
+import com.example.manager.repository.TransactionRepository;
 
 /**
  * Service für Live-Spielsimulationen mit textueller Ausgabe in Echtzeit 270
@@ -64,6 +65,9 @@ public class LiveMatchSimulationService {
 
 	@Autowired
 	private SimulationMessageRepository simulationMessageRepository;
+
+	@Autowired
+	private TransactionRepository transactionRepository;
 
 	private final Random random = new Random();
 	private boolean simulationRunning = false;
@@ -375,12 +379,66 @@ public class LiveMatchSimulationService {
 		Team awayTeam = teamRepository.findById(match.getAwayTeamId()).orElse(null);
 
 		if (homeTeam != null && awayTeam != null) {
-			LiveMatchEventDTO event = new LiveMatchEventDTO(match.getId(), "match_start", 0, "", "",
-					"⚽ Anpfiff: " + homeTeam.getName() + " vs " + awayTeam.getName(), 0, 0);
+			// Berechne erwartete Zuschauerzahl (gleiche Logik wie in RepositoryService)
+			int fanSatisfaction = homeTeam.getFanSatisfaction();
+			double occupancyMin = 0.0;
+			double occupancyMax = 0.0;
+
+			if (fanSatisfaction >= 95) {
+				occupancyMin = 1.0;
+				occupancyMax = 1.0;
+			} else if (fanSatisfaction >= 85) {
+				occupancyMin = 0.90;
+				occupancyMax = 1.0;
+			} else if (fanSatisfaction >= 70) {
+				occupancyMin = 0.75;
+				occupancyMax = 0.90;
+			} else if (fanSatisfaction >= 50) {
+				occupancyMin = 0.50;
+				occupancyMax = 0.75;
+			} else if (fanSatisfaction >= 30) {
+				occupancyMin = 0.35;
+				occupancyMax = 0.50;
+			} else if (fanSatisfaction >= 10) {
+				occupancyMin = 0.10;
+				occupancyMax = 0.35;
+			} else {
+				occupancyMin = 0.0;
+				occupancyMax = 0.10;
+			}
+
+			double occupancy = occupancyMin + (occupancyMax - occupancyMin) * random.nextDouble();
+
+			long standingSeats = homeTeam.getStadiumCapacityStanding() != null ? homeTeam.getStadiumCapacityStanding()
+					: 1000L;
+			long seatedSeats = homeTeam.getStadiumCapacitySeated() != null ? homeTeam.getStadiumCapacitySeated() : 0L;
+			long vipSeats = homeTeam.getStadiumCapacityVip() != null ? homeTeam.getStadiumCapacityVip() : 0L;
+
+			int ticketPriceStanding = homeTeam.getTicketPriceStanding();
+			int ticketPriceSeated = homeTeam.getTicketPriceSeated();
+			int ticketPriceVip = homeTeam.getTicketPriceVip();
+
+			double standingOccupancyModifier = repositoryService.calculatePriceOccupancyModifier(ticketPriceStanding,
+					20, 40, 60, 100);
+			double seatedOccupancyModifier = repositoryService.calculatePriceOccupancyModifier(ticketPriceSeated, 40,
+					80, 120, 200);
+			double vipOccupancyModifier = repositoryService.calculatePriceOccupancyModifier(ticketPriceVip, 80, 200,
+					300, 500);
+
+			long standingAttendance = (long) (standingSeats * occupancy * standingOccupancyModifier);
+			long seatedAttendance = (long) (seatedSeats * occupancy * seatedOccupancyModifier);
+			long vipAttendance = (long) (vipSeats * occupancy * vipOccupancyModifier);
+			long totalSpectators = standingAttendance + seatedAttendance + vipAttendance;
+
+			String startMessage = "⚽ Anpfiff: " + homeTeam.getName() + " vs " + awayTeam.getName() + " ("
+					+ totalSpectators + " Zuschauer im Stadion)";
+
+			LiveMatchEventDTO event = new LiveMatchEventDTO(match.getId(), "match_start", 0, "", "", startMessage, 0,
+					0);
 
 			// Speichere auch in DB
 			SimulationMessage message = new SimulationMessage(match.getId(), null, "match_start", 0, "", "",
-					"⚽ Anpfiff: " + homeTeam.getName() + " vs " + awayTeam.getName(), 0, 0, true);
+					startMessage, 0, 0, true);
 			simulationMessageRepository.save(message);
 
 			messagingTemplate.convertAndSend("/topic/live-match/" + match.getId(), event);
@@ -492,24 +550,64 @@ public class LiveMatchSimulationService {
 			Team awayTeam = teamRepository.findById(match.getAwayTeamId()).orElse(null);
 
 			if (homeTeam != null && awayTeam != null) {
-				LiveMatchEventDTO endEvent = new LiveMatchEventDTO(match.getId(), "match_end", 90, "", "",
-						"🏁 Abpfiff: " + homeTeam.getName() + " " + homeGoals + " : " + awayGoals + " "
-								+ awayTeam.getName(),
+				String endMessage = "🏁 Abpfiff: " + homeTeam.getName() + " " + homeGoals + " : " + awayGoals + " "
+						+ awayTeam.getName();
+				LiveMatchEventDTO endEvent = new LiveMatchEventDTO(match.getId(), "match_end", 90, "", "", endMessage,
 						homeGoals, awayGoals);
+
+				// Speichere Abpfiff-Event in DB
+				SimulationMessage endSimMessage = new SimulationMessage(match.getId(), null, "match_end", 90, "", "",
+						endMessage, homeGoals, awayGoals, true);
+				simulationMessageRepository.save(endSimMessage);
+
 				messagingTemplate.convertAndSend("/topic/live-match/" + match.getId(), endEvent);
 				messagingTemplate.convertAndSend("/topic/live-match/all", endEvent);
 			}
 
-			// Verarbeite Sponsoren-Zahlungen
-			String result = homeGoals > awayGoals ? "home" : (awayGoals > homeGoals ? "away" : "draw");
-			processSponsorPayouts(match.getHomeTeamId(), result.equals("home"));
-			processSponsorPayouts(match.getAwayTeamId(), result.equals("away"));
+			// Determine result
+			String result;
+			if (homeGoals > awayGoals) {
+				result = "home";
+			} else if (awayGoals > homeGoals) {
+				result = "away";
+			} else {
+				result = "draw";
+			}
+
+			// Berechne Team-Stärken für Zuschauereinnahmen
+			int homeStrength = calculateTeamStrength(match.getHomeTeamId());
+			int awayStrength = calculateTeamStrength(match.getAwayTeamId());
+
+			// Nutze RepositoryService-Methoden für alle finanziellen Transaktionen
+			// Process sponsor payouts for both teams
+			repositoryService.processSponsorPayouts(match.getHomeTeamId(), result.equals("home"));
+			repositoryService.processSponsorPayouts(match.getAwayTeamId(), result.equals("away"));
+
+			// Deduct player salaries for both teams
+			repositoryService.deductPlayerSalaries(match.getHomeTeamId());
+			repositoryService.deductPlayerSalaries(match.getAwayTeamId());
+
+			// Process attendance revenue (only for home team)
+			repositoryService.processAttendanceRevenue(match, match.getHomeTeamId(), match.getAwayTeamId(), homeGoals,
+					awayGoals, homeStrength, awayStrength);
 
 			// Trainiere Spieler
 			trainPlayersAfterMatch(match.getHomeTeamId(),
 					homeTeam.getActiveFormation() != null ? homeTeam.getActiveFormation() : "4-4-2");
 			trainPlayersAfterMatch(match.getAwayTeamId(),
 					awayTeam.getActiveFormation() != null ? awayTeam.getActiveFormation() : "4-4-2");
+
+			// Trainiere Akademie-Spieler beider Teams
+			repositoryService.trainAcademyPlayers(match.getHomeTeamId());
+			repositoryService.trainAcademyPlayers(match.getAwayTeamId());
+
+			// Sende "simulation-complete" Event für dieses Match
+			// Dies signalisiert dem Frontend, dass es die Daten neu laden soll
+			LiveMatchEventDTO completeEvent = new LiveMatchEventDTO(match.getId(), "simulation_complete", 90, "", "",
+					"Simulation abgeschlossen. Daten werden aktualisiert...", homeGoals, awayGoals);
+
+			messagingTemplate.convertAndSend("/topic/live-match/" + match.getId(), completeEvent);
+			messagingTemplate.convertAndSend("/topic/live-match/all", completeEvent);
 		}
 
 		simulationRunning = false;
@@ -540,9 +638,9 @@ public class LiveMatchSimulationService {
 	}
 
 	/**
-	 * Berechnet Penalty basierend auf Fitness-Level
-	 * Unter 80: -10%, Unter 70: -15%, Unter 60: -20%, Unter 50: -25%
-	 * Unter 40: -30%, Unter 30: -35%, Unter 20: -40%, Unter 10: -50%
+	 * Berechnet Penalty basierend auf Fitness-Level Unter 80: -10%, Unter 70: -15%,
+	 * Unter 60: -20%, Unter 50: -25% Unter 40: -30%, Unter 30: -35%, Unter 20:
+	 * -40%, Unter 10: -50%
 	 */
 	private int applyFitnessPenalty(int rating, int fitness) {
 		if (fitness < 10)
@@ -691,30 +789,6 @@ public class LiveMatchSimulationService {
 			}
 		}
 		return null;
-	}
-
-	private void processSponsorPayouts(Long teamId, boolean won) {
-		try {
-			com.example.manager.model.Sponsor sponsor = sponsorRepository.findByTeamId(teamId).orElse(null);
-			if (sponsor == null)
-				return;
-
-			Team team = teamRepository.findById(teamId).orElse(null);
-			if (team == null)
-				return;
-
-			if (sponsor.getAppearancePayout() > 0) {
-				team.setBudget(team.getBudgetAsLong() + sponsor.getAppearancePayout());
-			}
-
-			if (won && sponsor.getWinPayout() > 0) {
-				team.setBudget(team.getBudgetAsLong() + sponsor.getWinPayout());
-			}
-
-			teamRepository.save(team);
-		} catch (Exception e) {
-			System.err.println("[Sponsor] Fehler: " + e.getMessage());
-		}
 	}
 
 	private void trainPlayersAfterMatch(Long teamId, String formationId) {
@@ -890,8 +964,8 @@ public class LiveMatchSimulationService {
 	}
 
 	/**
-	 * Reduziert die Fitness aller spielenden Spieler um 1
-	 * Wird jede Spielminute aufgerufen (alle 3 Sekunden in Echtzeit)
+	 * Reduziert die Fitness aller spielenden Spieler um 1 Wird jede Spielminute
+	 * aufgerufen (alle 3 Sekunden in Echtzeit)
 	 */
 	private void reducePlayerStamina(Match match) {
 		try {

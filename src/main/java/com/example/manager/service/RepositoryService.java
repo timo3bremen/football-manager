@@ -2,6 +2,8 @@ package com.example.manager.service;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -365,8 +367,8 @@ public class RepositoryService {
 		if (saved.getId() != null) {
 			List<Player> existing = playerRepository.findByTeamId(saved.getId());
 			if (existing.isEmpty()) {
-				// Benutzer-Teams bekommen 1. Liga Spieler
-				initializeTeamPlayers(saved, 1);
+				// Benutzer-Teams bekommen 1. Liga Spieler mit Deutschland als Standard-Land
+				initializeTeamPlayers(saved, 1, "Deutschland");
 
 				// Initialize lineup slots for all formations with playerId = null
 				String[] formationIds = { "4-4-2", "4-3-3", "3-5-2" };
@@ -797,7 +799,8 @@ public class RepositoryService {
 			cpuTeam = teamRepository.save(cpuTeam);
 
 			// Initialisiere Spieler mit divisions-abhängigen Stärken und Stadionteile
-			initializeTeamPlayers(cpuTeam, division);
+			// Übergebe das Land für die Spieler-Generierung
+			initializeTeamPlayers(cpuTeam, division, country);
 			initializeTeamStadium(cpuTeam);
 			initializeTeamLineups(cpuTeam);
 
@@ -817,25 +820,76 @@ public class RepositoryService {
 	}
 
 	/**
-	 * Initialisiert die Spieler für ein Team mit divisions-abhängigen Stärken 1.
-	 * Liga: 70-90 2. Liga: 60-80 3. Liga: 50-70
+	 * Initialisiert die Spieler für ein Team mit einer Mischung aus verschiedenen Division-Ratings
 	 * 
-	 * Generiert auch 2 zufällige Starspieler mit +5 Bonus zu allen Stats
+	 * 1. Liga Team: 12 Spieler Division 1, 4 Spieler Division 2, 2 Spieler Division 3
+	 * 2. Liga Team: 2 Spieler Division 1, 12 Spieler Division 2, 4 Spieler Division 3
+	 * 3. Liga Team: 0 Spieler Division 1, 4 Spieler Division 2, 14 Spieler Division 3
+	 * 
+	 * Die Positionen werden zufällig aus allen verfügbaren Positionen zugewiesen
+	 * 70% der Spieler stammen aus dem angegebenen Land, 30% sind zufällig
 	 */
-	private void initializeTeamPlayers(Team team, int division) {
-		String[] positions = { "GK", "GK", "DEF", "DEF", "DEF", "DEF", "DEF", "DEF", "MID", "MID", "MID", "MID", "MID",
+	private void initializeTeamPlayers(Team team, int division, String country) {
+		String[] allPositions = { "GK", "GK", "DEF", "DEF", "DEF", "DEF", "DEF", "DEF", "MID", "MID", "MID", "MID", "MID",
 				"MID", "MID", "FWD", "FWD", "FWD" };
 
 		Random rand = new Random();
 		List<Player> createdPlayers = new ArrayList<>();
+		
+		// Bestimme die Verteilung der Spieler nach Division basierend auf der Team-Division
+		List<Integer> playerDivisions = new ArrayList<>();
+		
+		if (division == 1) {
+			// 1. Liga: 12x Div1, 4x Div2, 2x Div3
+			for (int i = 0; i < 12; i++) playerDivisions.add(1);
+			for (int i = 0; i < 4; i++) playerDivisions.add(2);
+			for (int i = 0; i < 2; i++) playerDivisions.add(3);
+		} else if (division == 2) {
+			// 2. Liga: 2x Div1, 12x Div2, 4x Div3
+			for (int i = 0; i < 2; i++) playerDivisions.add(1);
+			for (int i = 0; i < 12; i++) playerDivisions.add(2);
+			for (int i = 0; i < 4; i++) playerDivisions.add(3);
+		} else {
+			// 3. Liga: 0x Div1, 4x Div2, 14x Div3
+			for (int i = 0; i < 4; i++) playerDivisions.add(2);
+			for (int i = 0; i < 14; i++) playerDivisions.add(3);
+		}
+		
+		// Shuffle die Divisions-Liste für zufällige Reihenfolge
+		Collections.shuffle(playerDivisions, rand);
+		
+		// Shuffle die Positionen für zufällige Zuweisung
+		List<String> positionsList = new ArrayList<>(Arrays.asList(allPositions));
+		Collections.shuffle(positionsList, rand);
+		
+		// Bestimme welche Spieler aus dem Land stammen (70%) und welche zufällig (30%)
+		List<Boolean> countryFlags = new ArrayList<>();
+		for (int i = 0; i < 18; i++) {
+			countryFlags.add(rand.nextDouble() < 0.7); // 70% true (aus dem Land), 30% false (zufällig)
+		}
 
 		for (int i = 0; i < 18; i++) {
-			String[] playerData = PlayerNameGenerator.generatePlayerNameAndCountry();
+			String[] playerData;
+			
+			// Bestimme das Land für diesen Spieler
+			if (countryFlags.get(i)) {
+				// Spieler aus dem angegebenen Land
+				playerData = generatePlayerNameAndCountryByCountry(country, rand);
+			} else {
+				// Zufälliger Spieler aus beliebigem Land
+				playerData = PlayerNameGenerator.generatePlayerNameAndCountry();
+			}
+			
+			// Wähle die Division für diesen Spieler
+			int playerDivision = playerDivisions.get(i);
+			
+			// Wähle eine zufällige Position aus der gemischten Liste
+			String position = positionsList.get(i);
 
-			Player p = new Player(playerData[0], 0, 0, (int) (Math.random() * 20) - 10, positions[i], playerData[1]);
+			Player p = new Player(playerData[0], 0, 0, (int) (Math.random() * 20) - 10, position, playerData[1]);
 
-			// Initialisiere alle Fähigkeiten nach Division
-			p.initializeSkillsForDivision(division, rand);
+			// Initialisiere alle Fähigkeiten nach der zugeordneten Division
+			p.initializeSkillsForDivision(playerDivision, rand);
 
 			int age = 18 + rand.nextInt(17); // Age 18-34
 			long baseSalary = (long) (Math.pow(p.getRating(), 2.5) * 1.2);
@@ -850,62 +904,59 @@ public class RepositoryService {
 			playerRepository.save(p);
 			createdPlayers.add(p);
 		}
-
-		// Modifiziere 2 Spieler als "bessere" (+7 Rating) und 2 als "schlechtere" (-7
-		// Rating)
-		if (createdPlayers.size() >= 4) {
-			// 2 bessere Spieler (+7 Rating)
-			int better1Index = rand.nextInt(createdPlayers.size());
-			int better2Index;
-			do {
-				better2Index = rand.nextInt(createdPlayers.size());
-			} while (better2Index == better1Index);
-
-			Player better1 = createdPlayers.get(better1Index);
-			Player better2 = createdPlayers.get(better2Index);
-
-			better1.setRating(Math.min(100, better1.getRating() + 7));
-			better2.setRating(Math.min(100, better2.getRating() + 7));
-			better1.calculateMarketValue();
-			better2.calculateMarketValue();
-			playerRepository.save(better1);
-			playerRepository.save(better2);
-
-			System.out.println("[RepositoryService] Spieler " + better1.getName() + " und " + better2.getName()
-					+ " erhalten +7 Rating Boost");
-
-			// 2 schlechtere Spieler (-7 Rating)
-			int worse1Index;
-			int worse2Index;
-			do {
-				worse1Index = rand.nextInt(createdPlayers.size());
-			} while (worse1Index == better1Index || worse1Index == better2Index);
-
-			do {
-				worse2Index = rand.nextInt(createdPlayers.size());
-			} while (worse2Index == better1Index || worse2Index == better2Index || worse2Index == worse1Index);
-
-			Player worse1 = createdPlayers.get(worse1Index);
-			Player worse2 = createdPlayers.get(worse2Index);
-
-			worse1.setRating(Math.max(1, worse1.getRating() - 7));
-			worse2.setRating(Math.max(1, worse2.getRating() - 7));
-			worse1.calculateMarketValue();
-			worse2.calculateMarketValue();
-			playerRepository.save(worse1);
-			playerRepository.save(worse2);
-
-			System.out.println("[RepositoryService] Spieler " + worse1.getName() + " und " + worse2.getName()
-					+ " erhalten -7 Rating Malus");
+	}
+	
+	/**
+	 * Generiert einen Spielernamen und ein Land basierend auf dem angegebenen Land
+	 * Wählt Namen und Nachnamen aus den Namenslisten des angegebenen Landes
+	 */
+	private String[] generatePlayerNameAndCountryByCountry(String country, Random rand) {
+		// Deutsche Namen für Deutschland
+		if ("Deutschland".equals(country)) {
+			String[] germanFirstNames = { "Stefan", "Klaus", "Ralf", "Jürgen", "Thomas", "Michael", "Franz", "Werner",
+					"Hans", "Günther", "Hermann", "Peter", "Wolfgang", "Karl", "Friedrich",
+					"Dieter", "Horst", "Helmut", "Dietmar", "Lothar", "Gerhard", "Joachim", "Bernhard",
+					"Udo", "Siegfried", "Reinhard", "Manfred", "Kurt", "Bruno", "Wilfried", "Erwin" };
+			String[] germanLastNames = { "Müller", "Schmidt", "Schneider", "Fischer", "Weber", "Wagner", "Becker",
+					"Schäfer", "Schulze", "Hoffmann", "Schroeder", "Koch", "Bauer", "Richter",
+					"Krüger", "Huber", "Kaiser", "Schmitt", "Groß", "Braun", "Hartmann",
+					"Sauer", "Keller", "Neumann", "Schwarz", "Klein", "Wolf", "Schäfer",
+					"Lehmann", "Zimmermann", "Wirth", "Winter", "Wolff", "Krämer", "Lange",
+					"Voigt", "Dauer", "Pfeiffer", "Lorenz", "Pauer", "Reichel", "Strassburg" };
+			
+			String firstName = germanFirstNames[rand.nextInt(germanFirstNames.length)];
+			String lastName = germanLastNames[rand.nextInt(germanLastNames.length)];
+			return new String[]{firstName + " " + lastName, "Germany"};
 		}
+		
+		// Spanische Namen für Spanien
+		if ("Spanien".equals(country)) {
+			String[] spanishFirstNames = { "Carlos", "José", "Manuel", "Juan", "Diego", "Miguel", "Luis", "Antonio",
+					"Fernando", "Rafael", "Ricardo", "Pablo", "Javier", "Andrés", "Guillermo",
+					"Eduardo", "Sergio", "Alberto", "Roberto", "Raúl", "Ángel", "Víctor", "Enrique",
+					"Francisco", "Salvador", "Jesús", "Ignacio", "Mateo", "Felipe", "Alonso" };
+			String[] spanishLastNames = { "García", "Martínez", "González", "Rodríguez", "Hernández", "López",
+					"Pérez", "Sánchez", "Moreno", "Jiménez", "Díaz", "Ramírez", "Reyes",
+					"Cruza", "Vázquez", "Castro", "Domínguez", "Ruiz",
+					"Alvarez", "Arellano", "Asencio", "Ayala", "Baeza", "Bances", "Bandera",
+					"Barbar", "Barbero", "Barrera", "Bastida", "Bautista", "Benavides", "Benedetti",
+					"Benítez", "Benavente", "Cabeza", "Cabezas", "Cabral", "Cabrera", "Cabriales" };
+			
+			String firstName = spanishFirstNames[rand.nextInt(spanishFirstNames.length)];
+			String lastName = spanishLastNames[rand.nextInt(spanishLastNames.length)];
+			return new String[]{firstName + " " + lastName, "Spain"};
+		}
+		
+		// Fallback: zufällige Spieler
+		return PlayerNameGenerator.generatePlayerNameAndCountry();
 	}
 
 	/**
 	 * Initialisiert die Spieler für ein Team (Standard - für Benutzer-Teams)
 	 */
 	private void initializeTeamPlayers(Team team) {
-		// Benutzer-Teams bekommen 1. Liga Spieler
-		initializeTeamPlayers(team, 1);
+		// Benutzer-Teams bekommen 1. Liga Spieler mit Deutschland als Standard-Land
+		initializeTeamPlayers(team, 1, "Deutschland");
 	}
 
 	/**
@@ -1414,7 +1465,7 @@ public class RepositoryService {
 	 * Verarbeitet Zuschauereinnahmen und Fanfreundschafts-Änderungen nach einem
 	 * Spiel Nur für das Heimteam (HomeTeam)
 	 */
-	private void processAttendanceRevenue(Match match, Long homeTeamId, Long awayTeamId, int homeGoals, int awayGoals,
+	public void processAttendanceRevenue(Match match, Long homeTeamId, Long awayTeamId, int homeGoals, int awayGoals,
 			int homeStrength, int awayStrength) {
 		try {
 			Team homeTeam = teamRepository.findById(homeTeamId).orElse(null);
@@ -1529,7 +1580,7 @@ public class RepositoryService {
 	 * @param extremeMax Obere Grenze für "extreme" Preise (z.B. 100€)
 	 * @return Modifier zwischen 0.0 und 1.0 (oder höher für günstige Preise)
 	 */
-	private double calculatePriceOccupancyModifier(int price, int normalMin, int normalMax, int highMax, int extremeMax) {
+	public double calculatePriceOccupancyModifier(int price, int normalMin, int normalMax, int highMax, int extremeMax) {
 		// Sehr günstig (unter normalMin): Leichter Bonus (+5-10%)
 		if (price < normalMin / 2) {
 			return 1.10; // +10% Auslastung
@@ -1741,7 +1792,7 @@ public class RepositoryService {
 	 * Verarbeitet Sponsorenzahlungen nach einem Spiel - Antritt (appearance): Wird
 	 * immer gezahlt - Sieg (win): Wird nur bei Sieg gezahlt
 	 */
-	private void processSponsorPayouts(Long teamId, boolean won) {
+	public void processSponsorPayouts(Long teamId, boolean won) {
 		try {
 			Sponsor sponsor = sponsorRepository.findByTeamId(teamId).orElse(null);
 			if (sponsor == null) {
@@ -1788,7 +1839,7 @@ public class RepositoryService {
 	/**
 	 * Zieht Spielergehälter (pro Spiel) für alle Kaderspieler ab
 	 */
-	private void deductPlayerSalaries(Long teamId) {
+	public void deductPlayerSalaries(Long teamId) {
 		try {
 			Team team = teamRepository.findById(teamId).orElse(null);
 			if (team == null) {
@@ -2370,49 +2421,25 @@ public class RepositoryService {
 	}
 
 	/**
-	 * Führt tägliche Aufgaben durch wenn "Nächster Tag" geklickt wird: 1. Löscht
-	 * alle Transaktionen von heute (Tagesfinanzen zurückgesetzt) 2. Verkürzt alle
-	 * Stadionausbauten um 24h oder schließt sie ab wenn < 24h übrig
+	 * Führt tägliche Aufgaben durch wenn "Nächster Tag" geklickt wird: 1. Verkürzt alle
+	 * Stadionausbauten um 24h oder schließt sie ab wenn < 24h übrig 2. Berechnet 2%
+	 * Zinsen auf aktuellen Kontostand und speichert als Transaktion
+	 * 
+	 * WICHTIG: Löschen von Transaktionen NICHT hier - die gehören zur Saisonbilanz!
 	 */
 	@Transactional
 	private void processDailyTasks() {
 		try {
 			System.out.println("[RepositoryService] 📅 Verarbeite tägliche Tasks beim Tag-Wechsel...");
 
-		// 1. Lösche nur HEUTIGE Tagesfinanzen (Sponsoren, Zinsen)
-		// NICHT mehr: Zuschauereinnahmen (bleiben für die Saison)
-		// NICHT: Infrastruktur, Transfers, Spielergehälter
-		LocalDateTime now = LocalDateTime.now();
-		LocalDateTime startOfDay = now.withHour(0).withMinute(0).withSecond(0).withNano(0);
-		LocalDateTime endOfDay = now.withHour(23).withMinute(59).withSecond(59).withNano(999999999);
-
-		List<Transaction> transactions = transactionRepository.findAll();
-		List<Transaction> todaysTransactions = new ArrayList<>();
-
-		for (Transaction t : transactions) {
-			if (t.getCreatedAt() != null && t.getCreatedAt().isAfter(startOfDay)
-					&& t.getCreatedAt().isBefore(endOfDay)) {
-				// Lösche nur Sponsoren und Zinsen-Transaktionen (NICHT Zuschauereinnahmen!)
-				String cat = t.getCategory() != null ? t.getCategory() : "";
-				if (cat.equals("sponsors") || cat.equals("interest")) {
-					todaysTransactions.add(t);
-				}
-			}
-		}
-
-		if (!todaysTransactions.isEmpty()) {
-			System.out.println("[RepositoryService] 💳 Lösche " + todaysTransactions.size()
-					+ " Tages-Transaktionen (Sponsoren, Zinsen) - Zuschauereinnahmen bleiben!");
-			transactionRepository.deleteAll(todaysTransactions);
-		}
-
-		// 2. Verkürze Stadionausbauten um 24h oder schließe sie ab
+		// Verkürze Stadionausbauten um 24h oder schließe sie ab
 		List<StadiumBuild> stadiumBuilds = stadiumBuildRepository.findAll();
 
 		for (StadiumBuild build : stadiumBuilds) {
 			if (build.getCompleted())
 				continue; // Überspringe bereits abgeschlossene
 
+			LocalDateTime now = LocalDateTime.now();
 			LocalDateTime endTime = build.getEndTime();
 			// Berechne verbleibende Zeit
 			if (endTime.isBefore(now)) {
@@ -2434,12 +2461,73 @@ public class RepositoryService {
 			}
 
 			stadiumBuildRepository.save(build);
-			}
+		}
 
-			System.out.println("[RepositoryService] ✅ Tägliche Tasks abgeschlossen");
+		// Berechne und zahle 2% Zinsen auf aktuellen Kontostand für alle Teams
+		processInterestPayments();
+
+		System.out.println("[RepositoryService] ✅ Tägliche Tasks abgeschlossen");
 
 		} catch (Exception e) {
 			System.err.println("[RepositoryService] ❌ Fehler bei Tägliche Tasks: " + e.getMessage());
+			e.printStackTrace();
+		}
+	}
+
+	/**
+	 * Berechnet 0.5% Zinsen auf den aktuellen Kontostand und zahlt diese als
+	 * Transaktion aus für alle Teams
+	 * 
+	 * WICHTIG: Verwendet lastInterestMatchday Flag um Doppelzahlungen zu vermeiden!
+	 * Zinsen werden nur 1x pro Spieltag berechnet
+	 */
+	private void processInterestPayments() {
+		try {
+			// Hole GameStateTracking
+			GameStateTracking tracking = getOrCreateGameStateTracking();
+			int currentMatchday = tracking.getCurrentMatchday();
+			int lastInterestMatchday = tracking.getLastInterestMatchday();
+			
+			// Wenn Zinsen für diesen Spieltag bereits berechnet wurden, überspringe
+			if (lastInterestMatchday == currentMatchday) {
+				System.out.println("[Interest] ℹ️ Zinsen für Spieltag " + currentMatchday + " bereits berechnet. Überspringe!");
+				return;
+			}
+			
+			// Berechne neue Zinsen für alle Teams
+			List<Team> allTeams = teamRepository.findAll();
+			int teamsProcessed = 0;
+
+			for (Team team : allTeams) {
+				long currentBudget = team.getBudgetAsLong();
+				// Berechne 0.5% Zinsen
+				long interestAmount = (long) Math.round(currentBudget * 0.005);
+
+				if (interestAmount > 0) {
+					// Addiere Zinsen zum Kontostand
+					team.setBudgetAsLong(currentBudget + interestAmount);
+					teamRepository.save(team);
+
+					// Speichere als Transaktion
+					Transaction transaction = new Transaction(team.getId(), interestAmount, "income",
+							"💸 Tägliche Zinsen (0,5%)", "interest");
+					transactionRepository.save(transaction);
+
+					teamsProcessed++;
+					System.out.println("[Interest] Team " + team.getName() + ": " + currentBudget + "€ → +"
+							+ interestAmount + "€ Zinsen (0,5%)");
+				}
+			}
+
+			// Aktualisiere lastInterestMatchday um zu vermeiden, dass Zinsen doppelt berechnet werden
+			tracking.setLastInterestMatchday(currentMatchday);
+			gameStateTrackingRepository.save(tracking);
+
+			if (teamsProcessed > 0) {
+				System.out.println("[Interest] 💸 Zinsen für " + teamsProcessed + " Teams beim Spieltag " + currentMatchday + " verarbeitet");
+			}
+		} catch (Exception e) {
+			System.err.println("[Interest] Fehler bei Zinsberechnung: " + e.getMessage());
 			e.printStackTrace();
 		}
 	}
@@ -2484,15 +2572,17 @@ public class RepositoryService {
 			GameStateTracking tracking = getOrCreateGameStateTracking();
 			int nextMatchday = currentMatchday + 1;
 
-			// Wenn Spieltag 25 erreicht: Saison Reset mit Auf- und Abstieg
-			if (currentMatchday == 25) {
-				resetSeasonWithPromotion();
-				nextMatchday = 1; // Zurück auf Spieltag 1
-			}
+		// Wenn Spieltag 25 erreicht: Saison Reset mit Auf- und Abstieg
+		if (currentMatchday == 25) {
+			resetSeasonWithPromotion();
+			nextMatchday = 1; // Zurück auf Spieltag 1
+			// Setze lastInterestMatchday zurück damit Zinsen in neuer Saison berechnet werden
+			tracking.setLastInterestMatchday(0);
+		}
 
-			tracking.setCurrentMatchday(nextMatchday);
-			tracking.setLastSimulationTime(System.currentTimeMillis());
-			gameStateTrackingRepository.save(tracking);
+		tracking.setCurrentMatchday(nextMatchday);
+		tracking.setLastSimulationTime(System.currentTimeMillis());
+		gameStateTrackingRepository.save(tracking);
 
 			result.put("newMatchday", tracking.getCurrentMatchday());
 			result.put("isOffSeason", true);

@@ -12,9 +12,9 @@ export default function Club(){
   const API_BASE = (typeof window !== 'undefined' && window.__API_BASE__) || import.meta.env.VITE_API_URL || 'http://localhost:8080'
 
   const sponsorOptions = [
-    { key:'s1', name:'SportCo', payouts: { appearance:200, win:500, survive:5000, title:20000 } },
-    { key:'s2', name:'MegaCorp', payouts: { appearance:500, win:1200, survive:12000, title:60000 } },
-    { key:'s3', name:'LocalBank', payouts: { appearance:100, win:300, survive:2000, title:10000 } },
+    { key:'s1', name:'SportCo', payouts: { appearance:40000, win:100000, survive:4000000, title:15000000 } },
+    { key:'s2', name:'MegaCorp', payouts: { appearance:70000, win:20000, survive:7000000, title:12000000 } },
+    { key:'s3', name:'LocalBank', payouts: { appearance:120000, win:100000, survive:1000000, title:5000000 } },
   ]
 
   // Load sponsor when team changes or on mount
@@ -236,37 +236,74 @@ export default function Club(){
         </div>
       )}
 
-       {showSponsorModal && (
-         <div className="modal-backdrop" onClick={()=>setShowSponsorModal(false)}>
-           <div className="modal" onClick={e=>e.stopPropagation()}>
-             <h4>Neuen Sponsor auswählen</h4>
-             <p className="muted" style={{marginBottom:12}}>⚠️ Ein Verein kann nur 1 Sponsor haben. Der Sponsor wird am Saison-Ende automatisch entfernt.</p>
-             <div style={{display:'flex',flexDirection:'column',gap:8}}>
-               {sponsorOptions.map(opt => (
-                 <div key={opt.key} className="card" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                   <div>
-                     <strong>{opt.name}</strong>
-                     <div className="muted">Antritt: €{opt.payouts.appearance} · Sieg: €{opt.payouts.win}</div>
-                     <div className="muted">Klassenerhalt (Platz 1-8): €{opt.payouts.survive} · Titel (Platz 1-2): €{opt.payouts.title}</div>
-                   </div>
-                   <div>
-                     <button 
-                       className="btn primary" 
-                       onClick={() => chooseSponsor(opt)}
-                       disabled={loading}
-                     >
-                       {loading ? 'Lädt...' : 'Auswählen'}
-                     </button>
-                   </div>
-                 </div>
-               ))}
-             </div>
-             <div style={{marginTop:12}}>
-               <button className="btn secondary" onClick={()=>setShowSponsorModal(false)}>Schließen</button>
-             </div>
-           </div>
-         </div>
-       )}
+        {showSponsorModal && (
+          <div className="modal-backdrop" onClick={()=>setShowSponsorModal(false)}>
+            <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:'700px'}}>
+              <h4 style={{marginBottom:8}}>🤝 Neuen Sponsor auswählen</h4>
+              <p className="muted" style={{marginBottom:20, fontSize:'0.9em'}}>⚠️ Ein Verein kann nur 1 Sponsor haben. Der Sponsor wird am Saison-Ende automatisch entfernt.</p>
+              <div style={{display:'grid',gridTemplateColumns:'1fr',gap:12}}>
+                {sponsorOptions.map((opt, idx) => (
+                  <div 
+                    key={opt.key} 
+                    className="card" 
+                    style={{
+                      background:`linear-gradient(135deg, ${idx === 0 ? 'rgba(59,130,246,0.1)' : idx === 1 ? 'rgba(168,85,247,0.1)' : 'rgba(34,197,94,0.1)'}, ${idx === 0 ? 'rgba(59,130,246,0.05)' : idx === 1 ? 'rgba(168,85,247,0.05)' : 'rgba(34,197,94,0.05)'})`,
+                      border:`2px solid ${idx === 0 ? 'rgba(59,130,246,0.3)' : idx === 1 ? 'rgba(168,85,247,0.3)' : 'rgba(34,197,94,0.3)'}`,
+                      padding:'16px',
+                      borderRadius:'12px',
+                      display:'flex',
+                      justifyContent:'space-between',
+                      alignItems:'stretch',
+                      gap:'16px'
+                    }}
+                  >
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:'1.15em', fontWeight:'bold', marginBottom:12, color: idx === 0 ? '#3b82f6' : idx === 1 ? '#a855f7' : '#22c55e'}}>
+                        {idx === 0 ? '💼' : idx === 1 ? '🏢' : '🏦'} {opt.name}
+                      </div>
+                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px',marginBottom:12}}>
+                        <div style={{background:'rgba(255,255,255,0.05)', padding:'10px', borderRadius:'6px'}}>
+                          <div className="muted" style={{fontSize:'0.8em', marginBottom:'4px'}}>🎮 Antritt/Spiel</div>
+                          <div style={{fontSize:'1em', fontWeight:'bold', color: idx === 0 ? '#3b82f6' : idx === 1 ? '#a855f7' : '#22c55e'}}>€{opt.payouts.appearance.toLocaleString()}</div>
+                        </div>
+                        <div style={{background:'rgba(255,255,255,0.05)', padding:'10px', borderRadius:'6px'}}>
+                          <div className="muted" style={{fontSize:'0.8em', marginBottom:'4px'}}>⚽ Sieg</div>
+                          <div style={{fontSize:'1em', fontWeight:'bold', color:'#fbbf24'}}>€{opt.payouts.win.toLocaleString()}</div>
+                        </div>
+                        <div style={{background:'rgba(255,255,255,0.05)', padding:'10px', borderRadius:'6px'}}>
+                          <div className="muted" style={{fontSize:'0.8em', marginBottom:'4px'}}>📊 Klassenerhalt</div>
+                          <div style={{fontSize:'1em', fontWeight:'bold', color:'#60a5fa'}}>€{opt.payouts.survive.toLocaleString()}</div>
+                        </div>
+                        <div style={{background:'rgba(255,255,255,0.05)', padding:'10px', borderRadius:'6px'}}>
+                          <div className="muted" style={{fontSize:'0.8em', marginBottom:'4px'}}>🥇 Titel</div>
+                          <div style={{fontSize:'1em', fontWeight:'bold', color:'#f472b6'}}>€{opt.payouts.title.toLocaleString()}</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{display:'flex',flexDirection:'column',justifyContent:'center',alignItems:'center',minWidth:'140px'}}>
+                      <button 
+                        className="btn primary" 
+                        onClick={() => chooseSponsor(opt)}
+                        disabled={loading}
+                        style={{
+                          width:'100%',
+                          background: idx === 0 ? '#3b82f6' : idx === 1 ? '#a855f7' : '#22c55e',
+                          opacity: loading ? 0.6 : 1,
+                          cursor: loading ? 'not-allowed' : 'pointer'
+                        }}
+                      >
+                        {loading ? '⏳ Lädt...' : '✅ Auswählen'}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div style={{marginTop:16}}>
+                <button className="btn secondary" onClick={()=>setShowSponsorModal(false)}>Schließen</button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Finances Tab */}
         {clubSubTab === 'finances' && (
