@@ -7,6 +7,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Scheduler für Transfermarkt-Operationen
+ * CPU-Teams geben alle 4 Stunden Angebote ab und reagieren auf Angebote
  */
 @Service
 public class TransferMarketScheduler {
@@ -16,17 +17,13 @@ public class TransferMarketScheduler {
 
 	/**
 	 * Generiert automatisch CPU-Angebote für Spieler auf der Transferliste
-	 * initialDelay: 10 Sekunden nach Start (10000 ms) - schnell für Tests
-	 * fixedDelay: 30 Sekunden = 30000 ms (sehr schnell für Tests, später erhöhen!)
-	 * 
-	 * PRODUKTIV: initialDelay = 60000, fixedDelay = 14400000 (4 Stunden)
+	 * Läuft alle 4 Stunden: 00:00, 04:00, 08:00, 12:00, 16:00, 20:00
 	 */
-	@Scheduled(fixedDelay = 30000, initialDelay = 10000)
+	@Scheduled(cron = "0 0 0/4 * * ?") // Alle 4 Stunden
 	@Transactional
 	public void generateCPUOffersScheduled() {
 		long startTime = System.currentTimeMillis();
-		System.out.println("[TransferMarketScheduler] ⏰ Starting scheduled CPU offer generation at " + startTime);
-		System.out.println("[TransferMarketScheduler] Service instance: " + (transferMarketService != null ? "✅ Autowired" : "❌ NULL"));
+		System.out.println("[TransferMarketScheduler] ⏰ Starting scheduled CPU offer generation (every 4h)");
 		
 		try {
 			if (transferMarketService == null) {
@@ -45,16 +42,13 @@ public class TransferMarketScheduler {
 
 	/**
 	 * Verarbeitet automatisch CPU-Team Antworten auf Angebote
-	 * Läuft alle 45 Sekunden (nach Angebotserstellung)
-	 * initialDelay: 15 Sekunden (nach Angebotserstellung)
-	 * 
-	 * PRODUKTIV: initialDelay = 120000, fixedDelay = 21600000 (6 Stunden)
+	 * Läuft alle 4 Stunden (leicht versetzt): 00:30, 04:30, 08:30, 12:30, 16:30, 20:30
 	 */
-	@Scheduled(fixedDelay = 45000, initialDelay = 15000)
+	@Scheduled(cron = "0 30 0/4 * * ?") // Alle 4 Stunden, 30 Min versetzt
 	@Transactional
 	public void processCPUOfferResponsesScheduled() {
 		long startTime = System.currentTimeMillis();
-		System.out.println("[TransferMarketScheduler] ⏰ Starting scheduled CPU offer response processing at " + startTime);
+		System.out.println("[TransferMarketScheduler] ⏰ Starting scheduled CPU offer response processing (every 4h)");
 		
 		try {
 			if (transferMarketService == null) {

@@ -109,6 +109,7 @@ public class CupController {
                         match.put("winnerId", m.getWinnerId());
                         match.put("winnerName", m.getWinnerName());
                         match.put("status", m.getStatus());
+                        match.put("resultNote", m.getResultNote()); // n.V. oder n.E.
                         return match;
                     })
                     .toList();

@@ -12,7 +12,7 @@ public class TransactionDTO {
     private Long amount;
     private String type;
     private String description;
-    private String category; // 'attendance', 'sponsors', 'salaries', 'infrastructure', 'interest', 'transfers'
+    private String category; // 'attendance', 'sponsors', 'competition', 'salaries', 'infrastructure', 'interest', 'transfers'
     private LocalDateTime createdAt;
 
     public TransactionDTO() {

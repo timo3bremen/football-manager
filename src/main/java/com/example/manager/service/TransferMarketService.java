@@ -6,15 +6,19 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.stream.Collectors;
+import java.time.Instant;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import com.example.manager.model.Player;
 import com.example.manager.model.Team;
+import com.example.manager.model.TransferHistory;
 import com.example.manager.repository.PlayerRepository;
 import com.example.manager.repository.TeamRepository;
 import com.example.manager.repository.LineupRepository;
+import com.example.manager.repository.TransferHistoryRepository;
+import com.example.manager.repository.GameStateTrackingRepository;
 
 /**
  * Service für Transfermarkt-Operationen
@@ -30,6 +34,12 @@ public class TransferMarketService {
 
 	@Autowired
 	private LineupRepository lineupRepository;
+
+	@Autowired
+	private TransferHistoryRepository transferHistoryRepository;
+
+	@Autowired
+	private GameStateTrackingRepository gameStateTrackingRepository;
 
 	// Speichert alle Angebote: Liste von Maps mit Angebotsinformationen
 	private List<Map<String, Object>> transferOffers = new ArrayList<>();
@@ -323,6 +333,33 @@ public class TransferMarketService {
 			}
 			return false;
 		});
+		
+		// Speichere Transfer-Historie
+		try {
+			com.example.manager.model.GameStateTracking tracking = gameStateTrackingRepository.findAll().stream().findFirst().orElse(null);
+			int currentMatchday = tracking != null ? tracking.getCurrentMatchday() : 0;
+			int currentSeason = tracking != null ? tracking.getCurrentSeason() : 1;
+			
+			TransferHistory history = new TransferHistory(
+				player.getId(),
+				player.getName(),
+				player.getPosition(),
+				player.getRating(),
+				player.getAge(),
+				sellingTeamId,
+				sellingTeam.getName(),
+				buyingTeamId,
+				buyingTeam.getName(),
+				offerPrice,
+				currentMatchday,
+				currentSeason,
+				Instant.now()
+			);
+			transferHistoryRepository.save(history);
+			System.out.println("[TransferMarketService] 📜 Transfer-Historie gespeichert: " + player.getName());
+		} catch (Exception e) {
+			System.err.println("[TransferMarketService] Fehler beim Speichern der Transfer-Historie: " + e.getMessage());
+		}
 
 		System.out.println("[TransferMarketService] Transfer completed: " + player.getName() + " from "
 				+ sellingTeam.getName() + " to " + buyingTeam.getName() + " for " + offerPrice);
@@ -519,6 +556,33 @@ public class TransferMarketService {
 			}
 			return false;
 		});
+		
+		// Speichere Transfer-Historie
+		try {
+			com.example.manager.model.GameStateTracking tracking = gameStateTrackingRepository.findAll().stream().findFirst().orElse(null);
+			int currentMatchday = tracking != null ? tracking.getCurrentMatchday() : 0;
+			int currentSeason = tracking != null ? tracking.getCurrentSeason() : 1;
+			
+			TransferHistory history = new TransferHistory(
+				player.getId(),
+				player.getName(),
+				player.getPosition(),
+				player.getRating(),
+				player.getAge(),
+				sellingTeamId,
+				sellingTeam.getName(),
+				buyingTeamId,
+				buyingTeam.getName(),
+				offerPrice,
+				currentMatchday,
+				currentSeason,
+				Instant.now()
+			);
+			transferHistoryRepository.save(history);
+			System.out.println("[TransferMarketService] 📜 Transfer-Historie gespeichert: " + player.getName());
+		} catch (Exception e) {
+			System.err.println("[TransferMarketService] Fehler beim Speichern der Transfer-Historie: " + e.getMessage());
+		}
 
 		System.out.println("[TransferMarketService] Transfer completed via negotiation: " + player.getName() + " from "
 				+ sellingTeam.getName() + " to " + buyingTeam.getName() + " for " + offerPrice);

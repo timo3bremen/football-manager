@@ -144,4 +144,43 @@ public class TeamController {
 			return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
 		}
 	}
+
+	/**
+	 * Prüft wie viele CPU-Teams in einer Liga verfügbar sind
+	 * GET /api/v2/teams/league/{leagueId}/available-cpu-teams
+	 */
+	@GetMapping("/league/{leagueId}/available-cpu-teams")
+	public ResponseEntity<?> getAvailableCpuTeams(@PathVariable Long leagueId) {
+		try {
+			League league = leagueRepository.findById(leagueId).orElse(null);
+			if (league == null) {
+				return ResponseEntity.status(404).body(Map.of("error", "Liga nicht gefunden"));
+			}
+
+			int cpuTeamCount = 0;
+			int totalTeams = 0;
+
+			for (LeagueSlot slot : league.getSlots()) {
+				if (slot.getTeamId() != null) {
+					totalTeams++;
+					Team team = teamRepository.findById(slot.getTeamId()).orElse(null);
+					if (team != null && team.isCPU()) {
+						cpuTeamCount++;
+					}
+				}
+			}
+
+			Map<String, Object> response = new HashMap<>();
+			response.put("leagueId", leagueId);
+			response.put("leagueName", league.getName());
+			response.put("cpuTeamsAvailable", cpuTeamCount);
+			response.put("totalTeams", totalTeams);
+			response.put("canJoin", cpuTeamCount > 0);
+
+			return ResponseEntity.ok(response);
+		} catch (Exception e) {
+			e.printStackTrace();
+			return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
+		}
+	}
 }

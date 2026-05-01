@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.example.manager.model.FreeAgentOffer;
 import com.example.manager.model.Player;
 import com.example.manager.model.Team;
 import com.example.manager.repository.TeamRepository;
@@ -35,6 +36,9 @@ public class TransferMarketController {
 
 	@Autowired
 	private TeamRepository teamRepository;
+
+	@Autowired
+	private com.example.manager.repository.FreeAgentOfferRepository freeAgentOfferRepository;
 
 	/**
 	 * Gibt alle Angebote ab, die ein Team abgegeben hat GET
@@ -98,17 +102,28 @@ public class TransferMarketController {
 	/**
 	 * Gibt alle verfügbaren Spieler auf dem Transfermarkt zurück (alle Spieler
 	 * außer des eigenen Teams) GET
-	 * /api/v2/transfer-market/available?teamId=123&onTransferList=true&position=GK&minRating=75&maxRating=90
+	 * /api/v2/transfer-market/available?teamId=123&onTransferList=true&position=GK&minRating=75&maxRating=90&freeAgentsOnly=true
 	 * Optional: onTransferList Parameter um nur Transferlisten-Spieler zu filtern
+	 * Optional: freeAgentsOnly Parameter um nur freie Spieler anzuzeigen
 	 * Optional: position, minRating, maxRating für erweiterte Suche
 	 */
 	@GetMapping("/available")
 	public ResponseEntity<List<Map<String, Object>>> getAvailablePlayers(@RequestParam(required = false) Long teamId,
-			@RequestParam(required = false) Boolean onTransferList, @RequestParam(required = false) String position,
+			@RequestParam(required = false) Boolean onTransferList,
+			@RequestParam(required = false) Boolean freeAgentsOnly,
+			@RequestParam(required = false) String position,
 			@RequestParam(required = false) Integer minRating, @RequestParam(required = false) Integer maxRating) {
 		List<Player> players = transferMarketService.getAvailablePlayers().stream()
-				// Filtere NICHT die Spieler des eigenen Teams
-				.filter(p -> teamId == null || p.getTeamId() != null && !p.getTeamId().equals(teamId))
+				// Filtere eigene Spieler NUR aus wenn nicht freeAgentsOnly
+				.filter(p -> {
+					if (freeAgentsOnly != null && freeAgentsOnly) {
+						// Bei freeAgentsOnly: Zeige alle freien Spieler, egal welches Team
+						return p.isFreeAgent();
+					} else {
+						// Normal: Filtere nur Spieler des eigenen Teams aus
+						return teamId == null || (p.getTeamId() != null && !p.getTeamId().equals(teamId));
+					}
+				})
 				// Filtere optional nach onTransferList Status
 				.filter(p -> onTransferList == null || p.isOnTransferList() == onTransferList)
 				// Filtere optional nach Position
@@ -118,8 +133,10 @@ public class TransferMarketController {
 				// Filtere optional nach maxRating
 				.filter(p -> maxRating == null || p.getRating() <= maxRating).collect(Collectors.toList());
 
-		// Enriche mit Teamnamen
-		List<Map<String, Object>> result = players.stream().map(this::enrichPlayerWithTeamName)
+		// Enriche mit Teamnamen und Angebots-Status
+		final Long currentTeamId = teamId; // Final für Lambda
+		List<Map<String, Object>> result = players.stream()
+				.map(p -> enrichPlayerWithTeamNameAndOffer(p, currentTeamId))
 				.collect(Collectors.toList());
 
 		return ResponseEntity.ok(result);
@@ -185,6 +202,13 @@ public class TransferMarketController {
 	 * Hilfsmethode: Enriche Spieler mit Teamnamen
 	 */
 	private Map<String, Object> enrichPlayerWithTeamName(Player player) {
+		return enrichPlayerWithTeamNameAndOffer(player, null);
+	}
+
+	/**
+	 * Hilfsmethode: Enriche Spieler mit Teamnamen und Angebots-Status
+	 */
+	private Map<String, Object> enrichPlayerWithTeamNameAndOffer(Player player, Long checkingTeamId) {
 		Map<String, Object> map = new HashMap<>();
 		map.put("id", player.getId());
 		map.put("name", player.getName());
@@ -198,11 +222,27 @@ public class TransferMarketController {
 		map.put("contractLength", player.getContractLength());
 		map.put("teamId", player.getTeamId());
 		map.put("onTransferList", player.isOnTransferList());
+		map.put("isFreeAgent", player.isFreeAgent());
 
 		// Füge Teamnamen hinzu wenn verfügbar
 		if (player.getTeamId() != null && player.getTeamId() > 0) {
 			Team team = teamRepository.findById(player.getTeamId()).orElse(null);
 			map.put("teamName", team != null ? team.getName() : null);
+		} else if (player.isFreeAgent()) {
+			map.put("teamName", "Frei");
+		}
+
+		// Prüfe ob User bereits ein Angebot für diesen freien Spieler gemacht hat
+		if (player.isFreeAgent() && checkingTeamId != null) {
+			FreeAgentOffer existingOffer = freeAgentOfferRepository
+					.findByPlayerIdAndTeamId(player.getId(), checkingTeamId)
+					.orElse(null);
+			map.put("hasOffer", existingOffer != null);
+			if (existingOffer != null) {
+				map.put("offerStatus", existingOffer.getStatus());
+			}
+		} else {
+			map.put("hasOffer", false);
 		}
 
 		return map;

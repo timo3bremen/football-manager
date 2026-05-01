@@ -35,7 +35,7 @@ export default function AuctionSection() {
 
   const loadActiveAuctions = () => {
     setLoading(true)
-    fetch(`${API_BASE}/api/v2/auction/active`)
+    fetch(`${API_BASE}/api/v2/auction/active?teamId=${team.id}`)
       .then(r => {
         console.log('[AuctionSection] Response status:', r.status)
         if (!r.ok) {
@@ -73,20 +73,18 @@ export default function AuctionSection() {
 
   const handleSelectAuction = (auction) => {
     loadAuctionDetails(auction.id)
-    setBidAmount(Math.max(auction.marketValue, (auction.highestBidAmount || 0) + 1000))
+    // Setze Marktwert als initialen Gebotsbetrag (nicht höchstes Gebot)
+    setBidAmount(auction.marketValue)
     setShowBidModal(true)
   }
 
   const placeBid = () => {
     if (bidAmount < selectedAuction.marketValue) {
-      setMessage('Gebot unter Mindestpreis!')
+      setMessage('Gebot unter Marktwert!')
       return
     }
 
-    if (selectedAuction.highestBidAmount && bidAmount <= selectedAuction.highestBidAmount) {
-      setMessage('Gebot muss höher als aktuelles Gebot sein!')
-      return
-    }
+    // KEINE Prüfung ob höher als höchstes Gebot - jeder kann bieten wie er will
 
     fetch(`${API_BASE}/api/v2/auction/${selectedAuction.id}/bid`, {
       method: 'POST',
@@ -224,8 +222,8 @@ export default function AuctionSection() {
                 <th style={{ padding: '8px', textAlign: 'center', borderRight: '1px solid #444' }}>Position</th>
                 <th style={{ padding: '8px', textAlign: 'center', borderRight: '1px solid #444' }}>Rating</th>
                 <th style={{ padding: '8px', textAlign: 'center', borderRight: '1px solid #444' }}>Alter</th>
-                <th style={{ padding: '8px', textAlign: 'center', borderRight: '1px solid #444' }}>Mindestgebot</th>
-                <th style={{ padding: '8px', textAlign: 'center', borderRight: '1px solid #444' }}>Höchstes Gebot</th>
+                <th style={{ padding: '8px', textAlign: 'center', borderRight: '1px solid #444' }}>Marktwert</th>
+                <th style={{ padding: '8px', textAlign: 'center', borderRight: '1px solid #444' }}>Eigenes Gebot</th>
                 <th style={{ padding: '8px', textAlign: 'center', borderRight: '1px solid #444' }}>Verbleibend</th>
                 <th style={{ padding: '8px', textAlign: 'center' }}>Aktion</th>
               </tr>
@@ -250,8 +248,12 @@ export default function AuctionSection() {
                   <td style={{ padding: '8px', textAlign: 'center', borderRight: '1px solid #333', color: '#90ee90' }}>
                     {formatCurrency(auction.marketValue)}
                   </td>
-                  <td style={{ padding: '8px', textAlign: 'center', borderRight: '1px solid #333', color: '#ffb347' }}>
-                    {auction.highestBidAmount ? formatCurrency(auction.highestBidAmount) : '-'}
+                  <td style={{ padding: '8px', textAlign: 'center', borderRight: '1px solid #333', color: auction.myBidAmount ? '#4ade80' : '#666' }}>
+                    {auction.myBidAmount ? (
+                      <strong>{formatCurrency(auction.myBidAmount)}</strong>
+                    ) : (
+                      '-'
+                    )}
                   </td>
                   <td style={{ padding: '8px', textAlign: 'center', borderRight: '1px solid #333', color: '#ff6b6b' }}>
                     <strong>{getRemainingTime(auction.auctionEndTime)}</strong>
@@ -313,17 +315,14 @@ export default function AuctionSection() {
             <hr style={{ borderColor: '#444' }} />
             <p style={{ backgroundColor: '#1a3a1a', padding: '8px', borderRadius: '4px', color: '#90ee90' }}>
               <strong>📋 Nach Gewinn automatisch:</strong><br/>
-              💰 Gehalt: {formatCurrency(selectedAuction.salary)}/Saison<br/>
+              💰 Gehalt: {formatCurrency(selectedAuction.salary)}/Spieltag<br/>
               📅 Vertrag: 3 Saisons
             </p>
             <hr style={{ borderColor: '#444' }} />
-            <p style={{ color: '#90ee90' }}><strong>Mindestgebot:</strong> {formatCurrency(selectedAuction.marketValue)}</p>
-            {selectedAuction.highestBidAmount && (
-              <p style={{ color: '#ffb347' }}>
-                <strong>Aktuelles Höchstgebot:</strong> {formatCurrency(selectedAuction.highestBidAmount)}
-                {selectedAuction.highestBidderTeamId === team.id && (
-                  <span style={{ color: '#90ee90' }}> (Ihr Gebot)</span>
-                )}
+            <p style={{ color: '#90ee90' }}><strong>Marktwert (Mindestgebot):</strong> {formatCurrency(selectedAuction.marketValue)}</p>
+            {selectedAuction.myBidAmount && (
+              <p style={{ color: '#4ade80', backgroundColor: 'rgba(74, 222, 128, 0.1)', padding: '8px', borderRadius: '4px' }}>
+                <strong>Dein aktuelles Gebot:</strong> {formatCurrency(selectedAuction.myBidAmount)}
               </p>
             )}
           </div>
@@ -331,22 +330,27 @@ export default function AuctionSection() {
           <div style={{ marginBottom: '15px' }}>
             <label style={{ display: 'block', marginBottom: '5px' }}>Gebotsbetrag:</label>
             <input
-              type="number"
-              value={bidAmount}
-              onChange={(e) => setBidAmount(parseInt(e.target.value) || 0)}
+              type="text"
+              value={bidAmount.toLocaleString('de-DE')}
+              onChange={(e) => {
+                // Entferne Tausendertrennzeichen und parse zu Number
+                const value = e.target.value.replace(/\./g, '').replace(/,/g, '')
+                const numValue = parseInt(value) || 0
+                setBidAmount(numValue)
+              }}
               style={{
                 width: '100%',
                 padding: '8px',
                 backgroundColor: '#222',
                 border: '1px solid #444',
+                borderRadius: '4px',
                 color: '#fff',
-                borderRadius: '3px',
-                boxSizing: 'border-box'
+                fontSize: '16px'
               }}
             />
-            <p style={{ fontSize: '12px', color: '#aaa', marginTop: '5px' }}>
-              Gerundetes Gebot: {formatCurrency(bidAmount)}
-            </p>
+            <div style={{ fontSize: '0.85em', color: '#999', marginTop: '4px' }}>
+              Marktwert: {formatCurrency(selectedAuction.marketValue)}
+            </div>
           </div>
 
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'space-between' }}>

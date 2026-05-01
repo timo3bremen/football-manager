@@ -12,6 +12,7 @@ public class TeamDetailsDTO {
 	private Integer stadiumCapacity;
 	private String country;
 	private String leagueName;
+	private Long budget; // Für Test-Zwecke
 	private java.util.List<PlayerLineupDTO> lineup;
 	private java.util.List<PlayerLineupDTO> allPlayers;
 
@@ -104,5 +105,13 @@ public class TeamDetailsDTO {
 
 	public void setAllPlayers(java.util.List<PlayerLineupDTO> allPlayers) {
 		this.allPlayers = allPlayers;
+	}
+
+	public Long getBudget() {
+		return budget;
+	}
+
+	public void setBudget(Long budget) {
+		this.budget = budget;
 	}
 }

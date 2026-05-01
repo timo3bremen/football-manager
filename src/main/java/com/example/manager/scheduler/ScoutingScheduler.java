@@ -13,8 +13,8 @@ import com.example.manager.repository.ScoutRepository;
 import com.example.manager.service.RepositoryService;
 
 /**
- * Scheduler für Scouting-System Generiert täglich um 15 Uhr einen neuen
- * Jugenspieler pro aktivem Scout
+ * Scheduler für Scouting-System
+ * Generiert täglich um 14:00 Uhr einen neuen Jugenspieler pro aktivem Scout
  */
 @Component
 public class ScoutingScheduler {
@@ -26,13 +26,12 @@ public class ScoutingScheduler {
 	private RepositoryService repositoryService;
 
 	/**
-	 * Läuft täglich um 15:00 Uhr Generiert für jeden aktiven Scout einen neuen
-	 * Jugenspieler
+	 * Läuft täglich um 14:00 Uhr
+	 * Generiert für jeden aktiven Scout einen neuen Jugenspieler
 	 */
-//    @Scheduled(cron = "0 0 15 * * *") // täglich 15:00 Uhr
-	@Scheduled(fixedDelay = 30000, initialDelay = 10000)
+	@Scheduled(cron = "0 0 14 * * ?") // täglich 14:00 Uhr
 	public void generateScoutedPlayersDaily() {
-		System.out.println("[ScoutingScheduler] Starte tägliche Jugenspieler-Generierung");
+		System.out.println("⏰ [14:00] ScoutingScheduler - Starte tägliche Jugenspieler-Generierung");
 
 		try {
 			// Lade alle aktiven Scouts
@@ -68,36 +67,6 @@ public class ScoutingScheduler {
 		} catch (Exception e) {
 			System.err.println("[ScoutingScheduler] Fehler bei der Generierung: " + e.getMessage());
 			e.printStackTrace();
-		}
-	}
-
-	/**
-	 * Obsolete Methode - wird nicht mehr verwendet
-	 * Es gibt kein Limit für gescoutete Spieler pro Tag
-	 */
-	@Deprecated
-	private boolean hasAlreadyGeneratedTodayForScout(Scout scout) {
-		// Immer false - kein Limit
-		return false;
-	}
-
-	/**
-	 * Optional: Tägliche Cleanup - entferne inaktive Scouts nach 7 Tagen
-	 */
-	@Scheduled(cron = "0 0 0 * * *") // täglich um Mitternacht
-	public void cleanupExpiredScouts() {
-		System.out.println("[ScoutingScheduler] Cleanup: Entferne abgelaufene Scouts");
-
-		try {
-			List<Scout> inactiveScouts = scoutRepository.findAll().stream()
-					.filter(s -> !s.isActive() && s.getDaysRemaining() == 0).toList();
-
-			System.out.println("[ScoutingScheduler] Gefundene abgelaufene Scouts: " + inactiveScouts.size());
-			// Optional: Scouts löschen oder archivieren
-			// scoutRepository.deleteAll(inactiveScouts);
-
-		} catch (Exception e) {
-			System.err.println("[ScoutingScheduler] Fehler beim Cleanup: " + e.getMessage());
 		}
 	}
 }

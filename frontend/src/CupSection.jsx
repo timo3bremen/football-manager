@@ -221,14 +221,15 @@ export default function CupSection({ selectedCountry, leagueId }) {
             const isCompleted = match.status === 'completed'
             const homeWon = isCompleted && match.homeGoals > match.awayGoals
             const awayWon = isCompleted && match.awayGoals > match.homeGoals
+            const isUserMatch = team && (match.homeTeamId === team.id || match.awayTeamId === team.id)
             
             return (
               <div key={match.id} style={{
                 padding: '12px',
                 marginBottom: '10px',
-                border: '1px solid rgba(255,255,255,0.1)',
+                border: isUserMatch ? '2px solid #4CAF50' : '1px solid rgba(255,255,255,0.1)',
                 borderRadius: '4px',
-                backgroundColor: 'rgba(0,0,0,0.2)'
+                backgroundColor: isUserMatch ? 'rgba(76, 175, 80, 0.15)' : 'rgba(0,0,0,0.2)'
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   {/* Home Team */}
@@ -367,14 +368,25 @@ export default function CupSection({ selectedCountry, leagueId }) {
               <div>
                 <h4>Aufstellung (4-4-2)</h4>
                 {selectedTeamDetails.lineup.map((player) => (
-                  <div key={player.playerId} className="card" style={{ marginBottom: 8 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <div key={player.playerId} className="card" style={{ marginBottom: 8, padding: '10px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div>
                         <strong>{player.playerName}</strong>
-                        <div className="muted">{player.position}</div>
+                        <div className="muted" style={{ fontSize: '0.85em' }}>
+                          {player.position} • {player.age || '?'} Jahre
+                        </div>
                       </div>
-                      <div style={{ textAlign: 'right' }}>
-                        <strong>Rating: {player.rating}</strong>
+                      <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+                        <div style={{ textAlign: 'right' }}>
+                          <strong>{player.rating}</strong>
+                          <div className="muted" style={{ fontSize: '0.85em' }}>Rating</div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <strong style={{ color: player.fitness >= 80 ? '#4CAF50' : player.fitness >= 50 ? '#FFC107' : '#F44336' }}>
+                            {player.fitness || '?'}
+                          </strong>
+                          <div className="muted" style={{ fontSize: '0.85em' }}>Fitness</div>
+                        </div>
                       </div>
                     </div>
                   </div>

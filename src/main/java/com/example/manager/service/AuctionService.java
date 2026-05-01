@@ -21,10 +21,12 @@ import com.example.manager.model.AuctionBid;
 import com.example.manager.model.AuctionPlayer;
 import com.example.manager.model.Player;
 import com.example.manager.model.Team;
+import com.example.manager.model.TransferHistory;
 import com.example.manager.repository.AuctionBidRepository;
 import com.example.manager.repository.AuctionPlayerRepository;
 import com.example.manager.repository.PlayerRepository;
 import com.example.manager.repository.TeamRepository;
+import com.example.manager.repository.TransferHistoryRepository;
 
 /**
  * Service for managing daily auctions. - 7 new players appear every day at
@@ -46,14 +48,17 @@ public class AuctionService {
 	@Autowired
 	private TeamRepository teamRepository;
 
+	@Autowired
+	private TransferHistoryRepository transferHistoryRepository;
+
 	private static final int PLAYERS_PER_AUCTION = 7;
 	private static final int AUCTION_DURATION_HOURS = 24;
-	private static final int AUCTION_START_HOUR = 22; // 22:00 (10 PM)
+	private static final int AUCTION_END_HOUR = 16; // 16:00 (4 PM) - Auktionen enden immer um 16 Uhr
 	private final Random random = new Random();
 
 	/**
-	 * Creates 7 new auction players at 22:00 each day. Generates new players
-	 * without team for the auction.
+	 * Creates 7 new auction players. Auctions start immediately and end at 20:00 next day.
+	 * Generates new players without team for the auction.
 	 */
 	@Transactional
 	public void createDailyAuction() {
@@ -62,10 +67,10 @@ public class AuctionService {
 		// Generiere 7 neue Spieler OHNE Team für die Auktion
 		List<AuctionPlayer> auctionPlayers = new ArrayList<>();
 
-		// Berechne Auktionsstart und -ende einmalig
+		// Auktion startet SOFORT und endet um 16:00 Uhr am nächsten Tag
 		Instant now = Instant.now();
-		Instant auctionStart = calculateNextAuctionStartTime(now);
-		Instant auctionEnd = auctionStart.plusSeconds(AUCTION_DURATION_HOURS * 3600L);
+		Instant auctionStart = now; // Sofortiger Start
+		Instant auctionEnd = calculateNextAuctionEndTime(now); // Nächste 16:00 Uhr
 
 		for (int i = 0; i < PLAYERS_PER_AUCTION; i++) {
 			Player newPlayer = generateAuctionPlayer();
@@ -83,7 +88,7 @@ public class AuctionService {
 					+ newPlayer.getRating() + ", Market Value: " + newPlayer.getMarketValue() + ")");
 		}
 
-		System.out.println("[AuctionService] Daily auction created with " + auctionPlayers.size() + " new players");
+		System.out.println("[AuctionService] Daily auction created with " + auctionPlayers.size() + " new players (ends at " + auctionEnd + ")");
 	}
 
 	/**
@@ -146,12 +151,12 @@ public class AuctionService {
 	}
 
 	/**
-	 * Calculates the next auction start time (22:00). If current time is already
-	 * past 22:00, returns next day's 22:00.
+	 * Calculates the next auction start time (16:00). If current time is already
+	 * past 16:00, returns next day's 16:00.
 	 */
 	private Instant calculateNextAuctionStartTime(Instant now) {
 		ZonedDateTime zdt = now.atZone(ZoneId.systemDefault());
-		ZonedDateTime nextAuctionTime = zdt.toLocalDate().atTime(AUCTION_START_HOUR, 0).atZone(ZoneId.systemDefault());
+		ZonedDateTime nextAuctionTime = zdt.toLocalDate().atTime(AUCTION_END_HOUR, 0).atZone(ZoneId.systemDefault());
 
 		// Wenn die Zeit bereits vorbei ist, nächster Tag
 		if (zdt.isAfter(nextAuctionTime)) {
@@ -162,8 +167,24 @@ public class AuctionService {
 	}
 
 	/**
+	 * Calculates the next auction end time (16:00). If current time is before 16:00,
+	 * returns today's 16:00. Otherwise returns next day's 16:00.
+	 */
+	private Instant calculateNextAuctionEndTime(Instant now) {
+		ZonedDateTime zdt = now.atZone(ZoneId.systemDefault());
+		ZonedDateTime nextEndTime = zdt.toLocalDate().atTime(AUCTION_END_HOUR, 0).atZone(ZoneId.systemDefault());
+
+		// Wenn die aktuelle Zeit bereits nach 16:00 ist, nächster Tag
+		if (zdt.isAfter(nextEndTime) || zdt.equals(nextEndTime)) {
+			nextEndTime = nextEndTime.plusDays(1);
+		}
+
+		return nextEndTime.toInstant();
+	}
+
+	/**
 	 * Places a bid on an auction player. Bid amount must be at least the market
-	 * value. Bid must be higher than the current highest bid.
+	 * value. Multiple teams can bid any amount >= market value.
 	 */
 	@Transactional
 	public Map<String, Object> placeBid(Long auctionPlayerId, Long biddingTeamId, Long bidAmount) {
@@ -199,13 +220,8 @@ public class AuctionService {
 			return result;
 		}
 
-		// Prüfe ob aktuelles Gebot höher ist
-		if (auctionPlayer.getHighestBidAmount() != null && bidAmount <= auctionPlayer.getHighestBidAmount()) {
-			result.put("success", false);
-			result.put("message",
-					"Gebot muss höher sein als aktuelles Gebot (" + auctionPlayer.getHighestBidAmount() + ")");
-			return result;
-		}
+		// KEINE Prüfung ob Gebot höher als aktuelles höchstes Gebot ist!
+		// Jedes Team kann unabhängig bieten, höchstes gewinnt am Ende
 
 		// Lade Bieter-Team
 		Team biddingTeam = teamRepository.findById(biddingTeamId).orElse(null);
@@ -220,11 +236,13 @@ public class AuctionService {
 				false);
 		auctionBidRepository.save(bid);
 
-		// Aktualisiere höchstes Gebot auf AuctionPlayer
-		auctionPlayer.setHighestBidAmount(bidAmount);
-		auctionPlayer.setHighestBidderTeamId(biddingTeamId);
-		auctionPlayer.setHighestBidderTeamName(biddingTeam.getName());
-		auctionPlayerRepository.save(auctionPlayer);
+		// Aktualisiere höchstes Gebot auf AuctionPlayer (falls dieses Gebot das höchste ist)
+		if (auctionPlayer.getHighestBidAmount() == null || bidAmount > auctionPlayer.getHighestBidAmount()) {
+			auctionPlayer.setHighestBidAmount(bidAmount);
+			auctionPlayer.setHighestBidderTeamId(biddingTeamId);
+			auctionPlayer.setHighestBidderTeamName(biddingTeam.getName());
+			auctionPlayerRepository.save(auctionPlayer);
+		}
 
 		System.out.println("[AuctionService] Bid placed: " + biddingTeam.getName() + " bid " + bidAmount + " on "
 				+ auctionPlayer.getPlayerName());
@@ -265,6 +283,54 @@ public class AuctionService {
 			return result;
 		} catch (Exception e) {
 			System.err.println("[AuctionService] Error getting active auctions: " + e.getMessage());
+			e.printStackTrace();
+			return new ArrayList<>();
+		}
+	}
+
+	/**
+	 * Gets all active auction players with user's own bids included.
+	 */
+	public List<Map<String, Object>> getActiveAuctionsWithUserBids(Long teamId) {
+		try {
+			List<AuctionPlayer> activeAuctions = auctionPlayerRepository.findByAuctionStatus("active");
+			if (activeAuctions == null) {
+				activeAuctions = new ArrayList<>();
+			}
+
+			Instant now = Instant.now();
+			List<Map<String, Object>> result = new ArrayList<>();
+
+			for (AuctionPlayer auction : activeAuctions) {
+				if (auction != null && now.isBefore(auction.getAuctionEndTime())) {
+					Map<String, Object> auctionMap = auctionPlayerToMap(auction);
+					
+					// Füge eigenes Gebot hinzu wenn teamId vorhanden
+					if (teamId != null) {
+						List<AuctionBid> userBids = auctionBidRepository
+							.findByAuctionPlayerIdOrderByBidAmountDesc(auction.getId())
+							.stream()
+							.filter(bid -> bid.getBiddingTeamId().equals(teamId))
+							.collect(Collectors.toList());
+						
+						if (!userBids.isEmpty()) {
+							// Nehme das höchste eigene Gebot
+							AuctionBid highestUserBid = userBids.get(0);
+							auctionMap.put("myBidAmount", highestUserBid.getBidAmount());
+							auctionMap.put("myBidTime", highestUserBid.getBidTime());
+						} else {
+							auctionMap.put("myBidAmount", null);
+						}
+					}
+					
+					result.add(auctionMap);
+				}
+			}
+
+			System.out.println("[AuctionService] getActiveAuctionsWithUserBids returning " + result.size() + " auctions");
+			return result;
+		} catch (Exception e) {
+			System.err.println("[AuctionService] Error getting active auctions with user bids: " + e.getMessage());
 			e.printStackTrace();
 			return new ArrayList<>();
 		}
@@ -590,7 +656,7 @@ public class AuctionService {
 	 * seasons, Salary: auction player's salary
 	 */
 	@Transactional
-	public void closeAndTransferAuctions() {
+	public void closeAndTransferAuctions(int currentMatchday, int currentSeason) {
 		System.out.println("[AuctionService] 🔔 Checking auctions for expiration...");
 
 		long currentTimeMs = System.currentTimeMillis();
@@ -645,6 +711,15 @@ public class AuctionService {
 			Long transferPrice = winningBid.getBidAmount();
 			int contractLength = 3; // IMMER 3 Saisons
 			long newSalary = auction.getSalary(); // Gehalt vom Auktionsspieler
+			
+			// Hole altes Team für Transfer-Historie
+			String fromTeamName = null;
+			if (currentTeamId != null) {
+				Team fromTeam = teamRepository.findById(currentTeamId).orElse(null);
+				if (fromTeam != null) {
+					fromTeamName = fromTeam.getName();
+				}
+			}
 
 			player.setTeamId(winningBid.getBiddingTeamId());
 			player.setSalary(newSalary);
@@ -669,6 +744,24 @@ public class AuctionService {
 			auction.setWinnerTeamName(winningBid.getBiddingTeamName());
 			auction.setAuctionStatus("completed");
 			auctionPlayerRepository.save(auction);
+			
+			// Speichere Transfer-Historie
+			TransferHistory history = new TransferHistory(
+				player.getId(),
+				player.getName(),
+				player.getPosition(),
+				player.getRating(),
+				player.getAge(),
+				currentTeamId,
+				fromTeamName != null ? fromTeamName : "Transfermarkt",
+				winnerTeam.getId(),
+				winnerTeam.getName(),
+				transferPrice,
+				currentMatchday,
+				currentSeason,
+				Instant.now()
+			);
+			transferHistoryRepository.save(history);
 
 			System.out.println("[AuctionService] ✅ Transfer completed: " + player.getName() + " to "
 					+ winnerTeam.getName() + " for " + transferPrice + " (3 seasons, salary: " + newSalary + ")");
@@ -676,5 +769,44 @@ public class AuctionService {
 		}
 
 		System.out.println("[AuctionService] 🔔 Auction closing finished - " + transferCount + " players transferred");
+	}
+
+	/**
+	 * Overload without parameters (uses default values)
+	 */
+	@Transactional
+	public void closeAndTransferAuctions() {
+		closeAndTransferAuctions(0, 1); // Default: Tag 0, Saison 1
+	}
+
+	/**
+	 * Verkürzt die Auktionszeiten um 24 Stunden (wird bei advanceToNextMatchday aufgerufen)
+	 */
+	@Transactional
+	public void reduceAuctionTimeBy24Hours() {
+		System.out.println("[AuctionService] ⏰ Verkürze Auktionszeiten um 24 Stunden...");
+		
+		List<AuctionPlayer> activeAuctions = auctionPlayerRepository.findByAuctionStatus("active");
+		int reducedCount = 0;
+		
+		for (AuctionPlayer auction : activeAuctions) {
+			// Verkürze End-Zeit um 24 Stunden
+			Instant currentEndTime = auction.getAuctionEndTime();
+			Instant newEndTime = currentEndTime.minusSeconds(24 * 3600);
+			auction.setAuctionEndTime(newEndTime);
+			
+			// Verkürze auch expiresAt (unix timestamp)
+			long currentExpiresAt = auction.getExpiresAt();
+			long newExpiresAt = currentExpiresAt - (24 * 3600 * 1000L); // 24h in Millisekunden
+			auction.setExpiresAt(newExpiresAt);
+			
+			auctionPlayerRepository.save(auction);
+			
+			System.out.println("[AuctionService] ⏱️ Auktion für " + auction.getPlayerName() + " um 24h verkürzt: " 
+					+ currentEndTime + " → " + newEndTime);
+			reducedCount++;
+		}
+		
+		System.out.println("[AuctionService] ✅ " + reducedCount + " Auktionszeiten um 24h verkürzt");
 	}
 }

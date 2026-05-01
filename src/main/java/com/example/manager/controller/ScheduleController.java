@@ -101,15 +101,17 @@ public class ScheduleController {
 	}
 
 	/**
-	 * Gibt den aktuellen Spieltag zurück.
+	 * Gibt den aktuellen Spieltag und die aktuelle Saison zurück.
 	 * GET /api/v2/schedule/current-matchday
 	 */
 	@GetMapping("/current-matchday")
 	public ResponseEntity<Map<String, Integer>> getCurrentMatchday() {
 		repositoryService.checkAndAdvanceMatchday();
 		int matchday = repositoryService.getCurrentMatchday();
+		int season = repositoryService.getCurrentSeason();
 		Map<String, Integer> response = new HashMap<>();
 		response.put("currentMatchday", matchday);
+		response.put("currentSeason", season);
 		return ResponseEntity.ok(response);
 	}
 
@@ -149,6 +151,26 @@ public class ScheduleController {
 	public ResponseEntity<LeagueStatisticsDTO> getExtendedStatistics(@PathVariable Long leagueId) {
 		LeagueStatisticsDTO stats = repositoryService.getExtendedLeagueStatistics(leagueId);
 		return ResponseEntity.ok(stats);
+	}
+	
+	/**
+	 * Gibt ALLE Torschützen einer Liga zurück (ohne Pagination).
+	 * GET /api/v2/schedule/all-scorers/league/{leagueId}
+	 */
+	@GetMapping("/all-scorers/league/{leagueId}")
+	public ResponseEntity<List<PlayerStatisticsDTO>> getAllScorers(@PathVariable Long leagueId) {
+		List<PlayerStatisticsDTO> allScorers = repositoryService.getLeagueStatistics(leagueId);
+		return ResponseEntity.ok(allScorers);
+	}
+	
+	/**
+	 * Gibt ALLE Vorlagengeber einer Liga zurück (ohne Pagination).
+	 * GET /api/v2/schedule/all-assisters/league/{leagueId}
+	 */
+	@GetMapping("/all-assisters/league/{leagueId}")
+	public ResponseEntity<List<PlayerStatisticsDTO>> getAllAssisters(@PathVariable Long leagueId) {
+		List<PlayerStatisticsDTO> allAssisters = repositoryService.getLeagueAssistStatistics(leagueId);
+		return ResponseEntity.ok(allAssisters);
 	}
 
 	/**

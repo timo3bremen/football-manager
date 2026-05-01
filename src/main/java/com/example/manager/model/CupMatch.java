@@ -48,7 +48,7 @@ public class CupMatch {
     private String status; // scheduled, completed
 
     @Column(name = "resultNote")
-    private String resultNote; // i.V. (Verlängerung) oder i.E. (Elfmeterschießen)
+    private String resultNote; // n.V. (nach Verlängerung) oder n.E. (nach Elfmeterschießen)
 
     public CupMatch() {
     }

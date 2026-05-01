@@ -1,10 +1,12 @@
 import React, { useMemo, useState } from 'react'
 import { useGame } from './GameContext'
 import ContractsSection from './ContractsSection'
+import PlayerDetailsModal from './PlayerDetailsModal'
 
 export default function TeamPage(){
   const { roster, lineup, formationRows, currentFormation, setFormation, assignPlayerToSlot, swapSlots, removePlayerFromSlot } = useGame()
   const [teamSubTab, setTeamSubTab] = useState('lineup') // 'lineup' oder 'contracts'
+  const [selectedPlayerId, setSelectedPlayerId] = useState(null) // Für Player Details Modal
 
   // Debug logging
   React.useEffect(() => {
@@ -178,13 +180,15 @@ export default function TeamPage(){
                             onDragStart={player ? (e)=>onDragStartFromSlot(e, slotId) : undefined}
                             onDragOver={(e)=>e.preventDefault()}
                             onDrop={(e)=>onDropToSlot(e, slotId)}
+                            onClick={() => player && setSelectedPlayerId(player.id)}
                             title={slotId}
+                            style={{ cursor: player ? 'pointer' : 'default' }}
                           >
                             {player ? (
                               <div style={{width:'100%',height:'100%',display:'flex',flexDirection:'column',justifyContent:'space-between',padding:'4px'}}>
                                 <div>
                                   <div style={{fontSize:'0.85em',fontWeight:'bold'}}>{player.name}</div>
-                                  <div className="draggable-hint" style={{fontSize:'0.7em'}}>{player.position}</div>
+                                  <div className="draggable-hint" style={{fontSize:'0.7em'}}>{player.position} • {player.age || '?'}J</div>
                                   <div style={{fontSize:'0.7em',color:'#fbbf24',marginTop:2}}>⭐ {player.rating}</div>
                                 </div>
                                 
@@ -233,7 +237,7 @@ export default function TeamPage(){
               <h4>Spieler (Roster)</h4>
               <div className="draggable-hint">Ziehe Spieler auf das Feld oder hierher, um sie abzusetzen.</div>
               <ul className="roster-list">
-                 {roster.map(p => {
+                  {roster.map(p => {
                    const inLineup = isPlayerInLineup(p.id)
                    return (
                       <li 
@@ -241,19 +245,21 @@ export default function TeamPage(){
                         className="roster-item" 
                         draggable 
                         onDragStart={(e)=>onDragStartFromRoster(e,p.id)}
+                        onClick={() => setSelectedPlayerId(p.id)}
                         style={{
                           backgroundColor: inLineup ? 'rgba(52, 211, 153, 0.2)' : 'transparent',
                           borderLeft: inLineup ? '3px solid #10b981' : '3px solid transparent',
                           display: 'flex',
                           justifyContent: 'space-between',
-                          alignItems: 'center'
+                          alignItems: 'center',
+                          cursor: 'pointer'
                         }}
                       >
                         <div style={{flex:1}}>
                           <div style={{fontWeight: inLineup ? 'bold' : 'normal', color: inLineup ? '#10b981' : 'inherit'}}>
                             {p.name} {inLineup ? '✓' : ''}
                           </div>
-                          <div style={{fontSize: '0.85em', color:'var(--muted)'}}>{p.position} • {p.country}</div>
+                          <div style={{fontSize: '0.85em', color:'var(--muted)'}}>{p.position} • {p.age || '?'} Jahre • {p.country}</div>
                           <div style={{fontSize: '0.8em', color:'#fbbf24',marginTop:2}}>⭐ Rating: {p.rating}</div>
                           
                           {/* Fitness Bar im Roster */}
@@ -288,7 +294,10 @@ export default function TeamPage(){
                         </div>
                         {!inLineup && (
                           <button
-                            onClick={() => addPlayerToLineup(p.id)}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              addPlayerToLineup(p.id)
+                            }}
                             style={{
                               marginLeft: 12,
                               padding: '4px 12px',
@@ -307,7 +316,10 @@ export default function TeamPage(){
                         )}
                         {inLineup && (
                           <button
-                            onClick={() => removePlayerFromSlot(Object.entries(lineup).find(([_, pid]) => pid === p.id)?.[0])}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              removePlayerFromSlot(Object.entries(lineup).find(([_, pid]) => pid === p.id)?.[0])
+                            }}
                             style={{
                               marginLeft: 12,
                               padding: '4px 12px',
@@ -335,6 +347,14 @@ export default function TeamPage(){
 
       {/* Verträge Sub-Tab */}
       {teamSubTab === 'contracts' && <ContractsSection />}
+
+      {/* Player Details Modal */}
+      {selectedPlayerId && (
+        <PlayerDetailsModal
+          playerId={selectedPlayerId}
+          onClose={() => setSelectedPlayerId(null)}
+        />
+      )}
     </div>
   )
 }

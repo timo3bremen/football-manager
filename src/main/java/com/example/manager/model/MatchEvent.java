@@ -23,10 +23,16 @@ public class MatchEvent {
 	private Long playerId;
 
 	private String playerName;
-	private String type; // "goal", "yellow_card", "red_card"
+	private String type; // "goal", "yellow_card", "red_card", "assist", "chance_created", "error", "save"
 	
 	@Column(name = "game_minute")
 	private int minute; // 1-90
+	
+	@Column(name = "assist_player_id")
+	private Long assistPlayerId; // Für Vorlagen
+	
+	@Column(name = "assist_player_name")
+	private String assistPlayerName;
 
 	public MatchEvent() {
 	}
@@ -94,6 +100,22 @@ public class MatchEvent {
 
 	public void setMinute(int minute) {
 		this.minute = minute;
+	}
+
+	public Long getAssistPlayerId() {
+		return assistPlayerId;
+	}
+
+	public void setAssistPlayerId(Long assistPlayerId) {
+		this.assistPlayerId = assistPlayerId;
+	}
+
+	public String getAssistPlayerName() {
+		return assistPlayerName;
+	}
+
+	public void setAssistPlayerName(String assistPlayerName) {
+		this.assistPlayerName = assistPlayerName;
 	}
 
 	@Override

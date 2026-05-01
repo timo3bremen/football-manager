@@ -11,6 +11,7 @@ public class PlayerLineupDTO {
 	private int slotName;
 	private Integer age;
 	private String country;
+	private Integer fitness; // Fitness des Spielers (0-100)
 
 	public PlayerLineupDTO(Long playerId, String playerName, String position, int rating, int slotName) {
 		this.playerId = playerId;
@@ -84,5 +85,13 @@ public class PlayerLineupDTO {
 
 	public void setCountry(String country) {
 		this.country = country;
+	}
+
+	public Integer getFitness() {
+		return fitness;
+	}
+
+	public void setFitness(Integer fitness) {
+		this.fitness = fitness;
 	}
 }

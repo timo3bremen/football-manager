@@ -3,7 +3,9 @@
 :root{
   --bg: #0f172a; /* slate-900 */
   --card: #0b1220;
+  --card-bg: #1e293b; /* For modals */
   --muted: #94a3b8;
+  --border: rgba(255,255,255,0.1);
   --accent: #06b6d4; /* cyan-400 */
   --accent-2: #7c3aed; /* violet */
   --text: #e6eef6;

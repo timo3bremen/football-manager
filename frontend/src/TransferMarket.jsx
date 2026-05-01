@@ -5,13 +5,14 @@ import AuctionSection from './AuctionSection'
 
 export default function TransferMarket(){
   const { team } = useGame()
-  const [tab, setTab] = useState('available') // 'available', 'myPlayers', 'myOffers', 'scout', 'auction'
+  const [tab, setTab] = useState('available') // 'available', 'myPlayers', 'myOffers', 'scout', 'auction', 'history'
   const [availablePlayers, setAvailablePlayers] = useState([])
   const [myPlayers, setMyPlayers] = useState([])
   const [myOutgoingOffers, setMyOutgoingOffers] = useState([]) // Meine Angebote für andere Spieler
   const [myIncomingOffers, setMyIncomingOffers] = useState([]) // Angebote für meine Spieler
+  const [transferHistory, setTransferHistory] = useState([]) // Transfer-Historie
   const [loading, setLoading] = useState(false)
-  const [searchFilter, setSearchFilter] = useState({ position: '', minRating: '', maxRating: '', onTransferList: false })
+  const [searchFilter, setSearchFilter] = useState({ position: '', minRating: '', maxRating: '', onTransferList: false, showFreeAgentsOnly: false })
   const [selectedPlayer, setSelectedPlayer] = useState(null)
   const [showOfferModal, setShowOfferModal] = useState(false)
   const [offerPrice, setOfferPrice] = useState(0)
@@ -62,6 +63,13 @@ export default function TransferMarket(){
      }
    }, [tab])
 
+   // Lade Transfer-Historie
+   useEffect(() => {
+     if (tab === 'history') {
+       loadTransferHistory()
+     }
+   }, [tab])
+
    const loadAvailablePlayers = () => {
      setLoading(true)
      fetch(`${API_BASE}/api/v2/transfer-market/available?teamId=${team.id}`)
@@ -94,18 +102,35 @@ export default function TransferMarket(){
 
    const loadMyOffers = () => {
      setLoading(true)
-     // Lade meine abgegebenen Angebote und eingehende Angebote für meine Spieler
+     // Lade meine abgegebenen Angebote, eingehende Angebote UND Free-Agent-Angebote
      Promise.all([
        fetch(`${API_BASE}/api/v2/transfer-market/my-offers/outgoing?teamId=${team.id}`).then(r => r.json()),
-       fetch(`${API_BASE}/api/v2/transfer-market/my-offers/incoming?teamId=${team.id}`).then(r => r.json())
+       fetch(`${API_BASE}/api/v2/transfer-market/my-offers/incoming?teamId=${team.id}`).then(r => r.json()),
+       fetch(`${API_BASE}/api/v2/players/team/${team.id}/free-agent-offers`).then(r => r.json())
      ])
-       .then(([outgoing, incoming]) => {
-         setMyOutgoingOffers(outgoing || [])
+       .then(([outgoing, incoming, freeAgentOffers]) => {
+         // Kombiniere reguläre Angebote mit Free-Agent-Angeboten
+         const combinedOutgoing = [...(outgoing || []), ...(freeAgentOffers || [])]
+         setMyOutgoingOffers(combinedOutgoing)
          setMyIncomingOffers(incoming || [])
          setLoading(false)
        })
        .catch(e => {
          console.error('Fehler beim Laden der Angebote:', e)
+         setLoading(false)
+       })
+   }
+
+   const loadTransferHistory = () => {
+     setLoading(true)
+     fetch(`${API_BASE}/api/v2/auction/transfer-history`)
+       .then(r => r.json())
+       .then(data => {
+         setTransferHistory(data || [])
+         setLoading(false)
+       })
+       .catch(e => {
+         console.error('Fehler beim Laden der Transfer-Historie:', e)
          setLoading(false)
        })
    }
@@ -118,6 +143,7 @@ export default function TransferMarket(){
      if (searchFilter.minRating) params.append('minRating', searchFilter.minRating)
      if (searchFilter.maxRating) params.append('maxRating', searchFilter.maxRating)
      if (searchFilter.onTransferList) params.append('onTransferList', 'true')
+     if (searchFilter.showFreeAgentsOnly) params.append('freeAgentsOnly', 'true')
      
      fetch(`${API_BASE}/api/v2/transfer-market/available?${params}`)
        .then(r => r.json())
@@ -139,13 +165,56 @@ export default function TransferMarket(){
      if (!player) return
      
      setPlayerForOffer(player)
-     setOfferPrice(player.marketValue || 0)
+     // Für freie Spieler: Gehalt statt Ablöse
+     if (player.isFreeAgent) {
+       setOfferPrice(player.salary || 50000) // Standard-Gehalt
+       setNegotiationContractLength(2) // Standard-Vertragslaufzeit
+     } else {
+       setOfferPrice(player.marketValue || 0)
+     }
      setShowOfferModal(true)
    }
 
    const submitOffer = () => {
      if (!playerForOffer) return
      
+     // Für freie Spieler: Angebot ohne Ablöse
+     if (playerForOffer.isFreeAgent) {
+       setLoading(true)
+       fetch(`${API_BASE}/api/v2/players/${playerForOffer.id}/offer-free-agent`, {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({
+           teamId: team.id,
+           salary: offerPrice,
+           contractLength: negotiationContractLength
+         })
+       })
+         .then(r => r.json())
+         .then(data => {
+           setShowOfferModal(false)
+           setPlayerForOffer(null)
+           setOfferPrice(0)
+           if (data.success) {
+             alert(data.message)
+             // Aktualisiere nur den Status des Spielers in der aktuellen Liste
+             setAvailablePlayers(availablePlayers.map(p => 
+               p.id === playerForOffer.id ? { ...p, hasOffer: true, offerStatus: 'pending' } : p
+             ))
+           } else {
+             alert('Fehler: ' + data.message)
+           }
+           setLoading(false)
+         })
+         .catch(e => {
+           console.error('Fehler:', e)
+           alert('Fehler beim Abgeben des Angebots')
+           setLoading(false)
+         })
+       return
+     }
+     
+     // Normales Angebot mit Ablöse
      setLoading(true)
      fetch(`${API_BASE}/api/v2/transfer-market/offer`, {
        method: 'POST',
@@ -381,12 +450,37 @@ export default function TransferMarket(){
      return value + ' €'
    }
 
-    const PlayerCard = ({ player, showOfferBtn = false, showSellBtn = false, showRemoveFromSaleBtn = false, showAcceptBtn = false, onOffer, onSell, onRemoveFromSale, onAccept, onTeamClick, offerInfo = null, hideOfferInfo = false, hideTeamInfo = false, onNegotiate = null, onRejectOffer = null }) => (
-      <div className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: 8 }}>
+    const PlayerCard = ({ player, showOfferBtn = false, showSellBtn = false, showRemoveFromSaleBtn = false, showAcceptBtn = false, onOffer, onSell, onRemoveFromSale, onAccept, onTeamClick, offerInfo = null, hideOfferInfo = false, hideTeamInfo = false, onNegotiate = null, onRejectOffer = null, isOutgoingOffer = false }) => (
+      <div className="card" style={{ 
+        display: 'flex', 
+        justifyContent: 'space-between', 
+        alignItems: 'start', 
+        marginBottom: 8,
+        border: player.isFreeAgent ? '2px solid #10b981' : undefined,
+        background: player.isFreeAgent ? 'rgba(16, 185, 129, 0.05)' : undefined
+      }}>
         <div>
           <strong>{player.name}</strong>
           <div className="muted">Position: {player.position} · Land: {player.country}</div>
-          {!hideTeamInfo && player.teamId ? (
+          {!hideTeamInfo && player.isFreeAgent && (
+            <div style={{ color: '#10b981', fontWeight: 'bold', marginTop: 4, fontSize: '0.9em' }}>
+              ⭐ FREIER SPIELER - Keine Ablöse!
+              {player.hasOffer && (
+                <span style={{ 
+                  marginLeft: 8, 
+                  padding: '2px 8px', 
+                  background: player.offerStatus === 'outbid' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(59, 130, 246, 0.2)',
+                  border: '1px solid ' + (player.offerStatus === 'outbid' ? '#ef4444' : '#3b82f6'),
+                  borderRadius: '4px',
+                  fontSize: '0.85em',
+                  color: player.offerStatus === 'outbid' ? '#fca5a5' : '#93c5fd'
+                }}>
+                  {player.offerStatus === 'outbid' ? '❌ Überboten' : '✅ Angebot abgegeben'}
+                </span>
+              )}
+            </div>
+          )}
+          {!hideTeamInfo && !player.isFreeAgent && player.teamId ? (
             <div className="muted">
               Team: <span 
                 style={{ cursor: 'pointer', textDecoration: 'underline', color: '#6366f1' }}
@@ -397,32 +491,68 @@ export default function TransferMarket(){
               {player.onTransferList && <span style={{ marginLeft: 8, color: '#f59e0b', fontWeight: 'bold' }}>🏪 Auf Transferliste</span>}
             </div>
           ) : (
-            !hideTeamInfo && <div className="muted" style={{ color: '#f59e0b', fontWeight: 'bold' }}>🏪 Auf Transferliste</div>
+            !hideTeamInfo && !player.isFreeAgent && <div className="muted" style={{ color: '#f59e0b', fontWeight: 'bold' }}>🏪 Auf Transferliste</div>
           )}
           <div className="muted">Alter: {player.age} · Rating: {player.rating} · Potenzial: {player.potential}</div>
-          <div className="muted">Gehalt: {formatValue(player.salary)} · Marktwert: {formatValue(player.marketValue)}</div>
+          {!player.isFreeAgent && (
+            <div className="muted">
+              Gehalt: {formatValue(player.salary)}/Spieltag · Marktwert: {formatValue(player.marketValue)}
+            </div>
+          )}
+          {player.isFreeAgent && (
+            <div className="muted" style={{ color: '#9ca3af' }}>
+              Sucht neuen Verein - Entscheidung in 2 Spieltagen
+            </div>
+          )}
           {player.contractEndDate && (
             <div className="muted">Vertrag bis: {new Date(player.contractEndDate).toLocaleDateString()}</div>
           )}
           {offerInfo && !hideOfferInfo && (
-            <div style={{ marginTop: 6, padding: 8, background: 'rgba(100, 150, 255, 0.1)', borderRadius: 4 }}>
-              <div className="muted">💰 Angebot: {formatValue(offerInfo.offerPrice)}</div>
-              <div className="muted">
-                📤 Von: <span 
-                  style={{ cursor: 'pointer', textDecoration: 'underline', color: '#6366f1', fontWeight: 'bold' }}
-                  onClick={() => onTeamClick && offerInfo.buyingTeamId && onTeamClick(offerInfo.buyingTeamId)}
-                >
-                  {offerInfo.fromTeamName || ('Team ' + offerInfo.buyingTeamId) || '...'}
-                </span>
-              </div>
-              {offerInfo.status && (
-                <div className="muted">
-                  Status: <strong style={{
-                    color: offerInfo.status === 'accepted' ? '#10b981' : offerInfo.status === 'rejected' ? '#ef4444' : '#f59e0b'
-                  }}>
-                    {offerInfo.status === 'accepted' ? '✓ Angenommen' : offerInfo.status === 'rejected' ? '✗ Abgelehnt' : 'Ausstehend'}
-                  </strong>
-                </div>
+            <div style={{ 
+              marginTop: 6, 
+              padding: 8, 
+              background: offerInfo.isFreeAgent ? 'rgba(16, 185, 129, 0.1)' : 'rgba(100, 150, 255, 0.1)', 
+              borderRadius: 4,
+              border: offerInfo.isFreeAgent ? '1px solid #10b981' : 'none'
+            }}>
+              {offerInfo.isFreeAgent ? (
+                <>
+                  <div className="muted">💰 Gehalt-Angebot: {formatValue(offerInfo.offerPrice)}/Spieltag</div>
+                  <div className="muted">📅 Vertragslaufzeit: {offerInfo.contractLength} Saisons</div>
+                  <div className="muted">
+                    Status: <strong style={{
+                      color: offerInfo.status === 'pending' ? '#3b82f6' : 
+                             offerInfo.status === 'outbid' ? '#ef4444' : '#10b981'
+                    }}>
+                      {offerInfo.status === 'pending' ? '⏳ Wartet auf Entscheidung' : 
+                       offerInfo.status === 'outbid' ? '❌ Überboten' : 
+                       offerInfo.status === 'accepted' ? '✓ Angenommen' : offerInfo.status}
+                    </strong>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="muted">💰 Angebot: {formatValue(offerInfo.offerPrice)}</div>
+                  <div className="muted">
+                    📤 Von: <span 
+                      style={{ cursor: 'pointer', textDecoration: 'underline', color: '#6366f1', fontWeight: 'bold' }}
+                      onClick={() => onTeamClick && offerInfo.buyingTeamId && onTeamClick(offerInfo.buyingTeamId)}
+                    >
+                      {offerInfo.fromTeamName || ('Team ' + offerInfo.buyingTeamId) || '...'}
+                    </span>
+                  </div>
+                  {offerInfo.status && (
+                    <div className="muted">
+                      Status: <strong style={{
+                        color: offerInfo.status === 'accepted' ? '#10b981' : 
+                               offerInfo.status === 'rejected' ? '#ef4444' : '#f59e0b'
+                      }}>
+                        {offerInfo.status === 'accepted' ? '✓ Angenommen' : 
+                         offerInfo.status === 'rejected' ? '✗ Abgelehnt' : 'Ausstehend'}
+                      </strong>
+                    </div>
+                  )}
+                </>
               )}
             </div>
            )}
@@ -437,23 +567,24 @@ export default function TransferMarket(){
           {showRemoveFromSaleBtn && (
             <button className="btn warning" onClick={() => onRemoveFromSale(player.id)}>Von der Transferliste nehmen</button>
           )}
+          
+          {/* Für eingehende Angebote: Annehmen und Ablehnen Button */}
           {showAcceptBtn && offerInfo?.status === 'pending' && (
             <button className="btn success" onClick={() => onAccept(offerInfo)}>✓ Annehmen</button>
-          )}
-          {offerInfo?.status === 'pending' && onRejectOffer && !showAcceptBtn && (
-            <button className="btn secondary" onClick={() => onRejectOffer(offerInfo.id)} style={{ background: '#ef4444' }}>✕ Ablehnen</button>
           )}
           {showAcceptBtn && offerInfo?.status === 'pending' && onRejectOffer && (
             <button className="btn secondary" onClick={() => onRejectOffer(offerInfo.id)} style={{ background: '#ef4444' }}>✕ Ablehnen</button>
           )}
-          {offerInfo?.status === 'accepted' && onNegotiate && (
+          
+          {/* Für ausgehende Angebote (von mir): Nur bei accepted/rejected Actions */}
+          {isOutgoingOffer && offerInfo?.status === 'accepted' && onNegotiate && (
             <button className="btn info" onClick={() => onNegotiate(offerInfo)} style={{ background: '#8b5cf6' }}>💬 Gehaltsverhandlung</button>
           )}
-          {offerInfo?.status === 'rejected' && onRejectOffer && (
+          {isOutgoingOffer && offerInfo?.status === 'rejected' && onRejectOffer && (
             <button className="btn secondary" onClick={() => onRejectOffer(offerInfo.id)} style={{ background: '#ef4444' }}>🗑️ Löschen</button>
           )}
-          {offerInfo?.status === 'rejected' && !onRejectOffer && (
-            <span style={{ color: '#ef4444', fontWeight: 'bold', padding: '8px' }}>✗ Abgelehnt</span>
+          {isOutgoingOffer && offerInfo?.status === 'pending' && (
+            <span style={{ color: '#f59e0b', fontWeight: 'bold', padding: '8px', fontSize: '0.9em' }}>⏳ Wartet auf Antwort</span>
           )}
         </div>
       </div>
@@ -484,6 +615,9 @@ export default function TransferMarket(){
            </button>
            <button className={tab === 'scout' ? 'active' : ''} onClick={() => setTab('scout')}>
              Scout
+           </button>
+           <button className={tab === 'history' ? 'active' : ''} onClick={() => setTab('history')}>
+             📜 Wechselhistorie
            </button>
          </div>
 
@@ -534,6 +668,14 @@ export default function TransferMarket(){
                          onChange={(e) => setSearchFilter({ ...searchFilter, onTransferList: e.target.checked })}
                        />
                        <span>Nur Transferliste</span>
+                     </label>
+                     <label style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', cursor: 'pointer' }}>
+                       <input
+                         type="checkbox"
+                         checked={searchFilter.showFreeAgentsOnly}
+                         onChange={(e) => setSearchFilter({ ...searchFilter, showFreeAgentsOnly: e.target.checked })}
+                       />
+                       <span>⭐ Nur freie Spieler</span>
                      </label>
                      <button className="btn primary" onClick={handleSearch}>Suchen</button>
                    </div>
@@ -618,25 +760,31 @@ export default function TransferMarket(){
                  <>
                       <h5 style={{ marginTop: 16, marginBottom: 12 }}>📤 Von mir abgegebene Angebote</h5>
                        {myOutgoingOffers.length ? (
-                         myOutgoingOffers.map((offer) => (
-                           <PlayerCard
-                             key={offer.id}
-                             player={offer}
-                             hideTeamInfo={true}
-                             onTeamClick={openTeamDetails}
-                             onNegotiate={handleNegotiate}
-                             onRejectOffer={handleRejectOffer}
-                             offerInfo={{
-                               offerPrice: offer.offerPrice,
-                               fromTeamName: team.name,
-                               buyingTeamId: offer.buyingTeamId,
-                               status: offer.status,
-                               playerName: offer.name,
-                               currentSalary: offer.salary,
-                               id: offer.id
-                             }}
-                           />
-                         ))
+                         myOutgoingOffers.map((offer) => {
+                           const isFreeAgentOffer = offer.isFreeAgent === true
+                           return (
+                             <PlayerCard
+                               key={offer.id}
+                               player={offer}
+                               hideTeamInfo={true}
+                               onTeamClick={openTeamDetails}
+                               onNegotiate={!isFreeAgentOffer ? handleNegotiate : null}
+                               onRejectOffer={handleRejectOffer}
+                               isOutgoingOffer={!isFreeAgentOffer}
+                               offerInfo={{
+                                 offerPrice: isFreeAgentOffer ? offer.offerSalary : offer.offerPrice,
+                                 fromTeamName: team.name,
+                                 buyingTeamId: offer.buyingTeamId,
+                                 status: offer.status,
+                                 playerName: offer.name || offer.playerName,
+                                 currentSalary: offer.salary,
+                                 id: offer.id,
+                                 isFreeAgent: isFreeAgentOffer,
+                                 contractLength: offer.contractLength
+                               }}
+                             />
+                           )
+                         })
                        ) : (
                          <p className="muted">Keine abgegebenen Angebote</p>
                        )}
@@ -679,41 +827,195 @@ export default function TransferMarket(){
            {tab === 'scout' && (
              <ScoutSection />
            )}
+
+           {tab === 'history' && (
+             <div>
+               <h4>📜 Wechselhistorie</h4>
+               
+               {loading ? (
+                 <p className="muted">Lädt...</p>
+               ) : transferHistory.length === 0 ? (
+                 <p className="muted">Noch keine Transfers über Auktionen durchgeführt</p>
+               ) : (
+                 <div style={{ overflowX: 'auto' }}>
+                   <table style={{
+                     width: '100%',
+                     borderCollapse: 'collapse',
+                     marginTop: '10px',
+                     backgroundColor: '#1a1a1a',
+                     border: '1px solid #444'
+                   }}>
+                     <thead>
+                       <tr style={{ backgroundColor: '#222', borderBottom: '2px solid #444' }}>
+                         <th style={{ padding: '8px', textAlign: 'left', borderRight: '1px solid #444' }}>Spieler</th>
+                         <th style={{ padding: '8px', textAlign: 'center', borderRight: '1px solid #444' }}>Position</th>
+                         <th style={{ padding: '8px', textAlign: 'center', borderRight: '1px solid #444' }}>Rating</th>
+                         <th style={{ padding: '8px', textAlign: 'center', borderRight: '1px solid #444' }}>Alter</th>
+                         <th style={{ padding: '8px', textAlign: 'left', borderRight: '1px solid #444' }}>Von</th>
+                         <th style={{ padding: '8px', textAlign: 'left', borderRight: '1px solid #444' }}>Zu</th>
+                         <th style={{ padding: '8px', textAlign: 'center', borderRight: '1px solid #444' }}>Preis</th>
+                         <th style={{ padding: '8px', textAlign: 'center', borderRight: '1px solid #444' }}>Spieltag</th>
+                         <th style={{ padding: '8px', textAlign: 'center' }}>Saison</th>
+                       </tr>
+                     </thead>
+                     <tbody>
+                       {transferHistory.map((transfer, idx) => (
+                         <tr key={idx} style={{ borderBottom: '1px solid #333' }}>
+                           <td style={{ padding: '8px', borderRight: '1px solid #333' }}>
+                             <strong>{transfer.playerName}</strong>
+                           </td>
+                           <td style={{ padding: '8px', textAlign: 'center', borderRight: '1px solid #333' }}>
+                             {transfer.position}
+                           </td>
+                           <td style={{ padding: '8px', textAlign: 'center', borderRight: '1px solid #333' }}>
+                             <span style={{ color: transfer.rating >= 75 ? '#90ee90' : '#aaa' }}>
+                               {transfer.rating}
+                             </span>
+                           </td>
+                           <td style={{ padding: '8px', textAlign: 'center', borderRight: '1px solid #333' }}>
+                             {transfer.age}
+                           </td>
+                           <td style={{ padding: '8px', borderRight: '1px solid #333' }}>
+                             {transfer.fromTeamName || 'Transfermarkt'}
+                           </td>
+                           <td style={{ padding: '8px', borderRight: '1px solid #333' }}>
+                             <strong>{transfer.toTeamName}</strong>
+                           </td>
+                           <td style={{ padding: '8px', textAlign: 'center', borderRight: '1px solid #333', color: '#90ee90' }}>
+                             {formatValue(transfer.transferPrice)}
+                           </td>
+                           <td style={{ padding: '8px', textAlign: 'center', borderRight: '1px solid #333' }}>
+                             Tag {transfer.matchday}
+                           </td>
+                           <td style={{ padding: '8px', textAlign: 'center' }}>
+                             Saison {transfer.season}
+                           </td>
+                         </tr>
+                       ))}
+                     </tbody>
+                   </table>
+                 </div>
+               )}
+             </div>
+           )}
          </div>
        </div>
 
        {showOfferModal && (
          <div className="modal-backdrop" onClick={() => setShowOfferModal(false)}>
            <div className="modal" onClick={e => e.stopPropagation()}>
-             <h4>Angebot für Spieler abgeben</h4>
+             <h4>{playerForOffer?.isFreeAgent ? 'Angebot für freien Spieler' : 'Angebot für Spieler abgeben'}</h4>
              {playerForOffer && (
                <div>
                  <p><strong>{playerForOffer.name}</strong> ({playerForOffer.position})</p>
-                 <div className="muted" style={{ marginBottom: 12 }}>Marktwert: {formatValue(playerForOffer.marketValue)}</div>
-                 
-                 <label style={{ display: 'block', marginBottom: 8 }}>
-                   Angebotspreis:
-                   <input
-                     type="number"
-                     value={offerPrice}
-                     onChange={(e) => setOfferPrice(parseInt(e.target.value) || 0)}
-                     style={{ 
-                       width: '100%', 
-                       padding: '8px', 
-                       marginTop: 4, 
-                       borderRadius: '4px', 
-                       border: '1px solid rgba(255,255,255,0.1)',
-                       color: '#fff',
-                       background: 'rgba(0,0,0,0.3)'
-                     }}
-                   />
-                 </label>
-                 
-                 <div className="muted" style={{ marginBottom: 12 }}>Dein Angebot: <strong>{formatValue(offerPrice)}</strong></div>
+                 {playerForOffer.isFreeAgent ? (
+                   <>
+                     <div style={{ 
+                       padding: '12px', 
+                       background: 'rgba(16, 185, 129, 0.1)', 
+                       borderRadius: '6px', 
+                       marginBottom: 12,
+                       border: '1px solid #10b981'
+                     }}>
+                       <div style={{ color: '#10b981', fontWeight: 'bold', marginBottom: 4 }}>
+                         ⭐ FREIER SPIELER
+                       </div>
+                       <div className="muted" style={{ fontSize: '0.9em' }}>
+                         Keine Ablösesumme erforderlich! Nur Gehalt verhandeln.
+                       </div>
+                     </div>
+                     
+                     <label style={{ display: 'block', marginBottom: 8 }}>
+                       Gehalt pro Spieltag:
+                       <input
+                         type="text"
+                         value={offerPrice.toLocaleString('de-DE')}
+                         onChange={(e) => {
+                           const value = e.target.value.replace(/\./g, '').replace(/,/g, '')
+                           const numValue = parseInt(value) || 0
+                           setOfferPrice(numValue)
+                         }}
+                         onFocus={(e) => {
+                           if (offerPrice === 0) {
+                             e.target.select()
+                           }
+                         }}
+                         style={{ 
+                           width: '100%', 
+                           padding: '8px', 
+                           marginTop: 4, 
+                           borderRadius: '4px', 
+                           border: '1px solid rgba(255,255,255,0.1)',
+                           color: '#fff',
+                           background: 'rgba(0,0,0,0.3)'
+                         }}
+                       />
+                     </label>
+                     
+                     <div className="muted" style={{ marginBottom: 12 }}>Dein Angebot: <strong>{formatValue(offerPrice)}</strong></div>
+
+                     <label style={{ display: 'block', marginBottom: 16 }}>
+                       Vertragslaufzeit:
+                       <div style={{ display: 'flex', gap: '8px', marginTop: 8 }}>
+                         {[2, 3, 4, 5].map(length => (
+                           <button
+                             key={length}
+                             onClick={() => setNegotiationContractLength(length)}
+                             style={{
+                               flex: 1,
+                               padding: '8px',
+                               borderRadius: '4px',
+                               border: negotiationContractLength === length ? '2px solid #3b82f6' : '1px solid rgba(255,255,255,0.2)',
+                               background: negotiationContractLength === length ? 'rgba(59, 130, 246, 0.2)' : 'rgba(0,0,0,0.3)',
+                               color: '#fff',
+                               cursor: 'pointer',
+                               fontWeight: negotiationContractLength === length ? 'bold' : 'normal'
+                             }}
+                           >
+                             {length}
+                           </button>
+                         ))}
+                       </div>
+                     </label>
+                   </>
+                 ) : (
+                   <>
+                     <div className="muted" style={{ marginBottom: 12 }}>Marktwert: {formatValue(playerForOffer.marketValue)}</div>
+                     
+                     <label style={{ display: 'block', marginBottom: 8 }}>
+                       Angebotspreis:
+                       <input
+                         type="text"
+                         value={offerPrice.toLocaleString('de-DE')}
+                         onChange={(e) => {
+                           const value = e.target.value.replace(/\./g, '').replace(/,/g, '')
+                           const numValue = parseInt(value) || 0
+                           setOfferPrice(numValue)
+                         }}
+                         onFocus={(e) => {
+                           if (offerPrice === 0) {
+                             e.target.select()
+                           }
+                         }}
+                         style={{ 
+                           width: '100%', 
+                           padding: '8px', 
+                           marginTop: 4, 
+                           borderRadius: '4px', 
+                           border: '1px solid rgba(255,255,255,0.1)',
+                           color: '#fff',
+                           background: 'rgba(0,0,0,0.3)'
+                         }}
+                       />
+                     </label>
+                     
+                     <div className="muted" style={{ marginBottom: 12 }}>Dein Angebot: <strong>{formatValue(offerPrice)}</strong></div>
+                   </>
+                 )}
 
                  <div style={{ display: 'flex', gap: 8 }}>
                    <button className="btn primary" onClick={submitOffer} disabled={loading}>
-                     {loading ? 'Wird gesendet...' : 'Angebot absenden'}
+                     {loading ? 'Wird gesendet...' : (playerForOffer?.isFreeAgent ? 'Angebot absenden' : 'Angebot absenden')}
                    </button>
                    <button className="btn secondary" onClick={() => setShowOfferModal(false)}>Abbrechen</button>
                  </div>
@@ -773,23 +1075,33 @@ export default function TransferMarket(){
              {/* Aufstellung Tab */}
              <div style={{ marginBottom: '24px' }}>
                <h4 style={{ marginBottom: '12px' }}>Aufstellung (Spieltag)</h4>
-               {selectedTeamDetails.lineup && selectedTeamDetails.lineup.length > 0 ? (
-                 <div>
-                   {selectedTeamDetails.lineup.map((player) => (
-                     <div key={player.playerId} className="card" style={{ marginBottom: 8, padding: '10px' }}>
-                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                         <div>
-                           <strong>{player.playerName}</strong>
-                           <div className="muted" style={{ fontSize: '0.85em' }}>{player.position}</div>
-                         </div>
-                         <div style={{ textAlign: 'right' }}>
-                           <strong>{player.rating}</strong>
-                           <div className="muted" style={{ fontSize: '0.85em' }}>Rating</div>
-                         </div>
-                       </div>
-                     </div>
-                   ))}
-                 </div>
+              {selectedTeamDetails.lineup && selectedTeamDetails.lineup.length > 0 ? (
+                <div>
+                  {selectedTeamDetails.lineup.map((player) => (
+                    <div key={player.playerId} className="card" style={{ marginBottom: 8, padding: '10px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <strong>{player.playerName}</strong>
+                          <div className="muted" style={{ fontSize: '0.85em' }}>
+                            {player.position} • {player.age || '?'} Jahre
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+                          <div style={{ textAlign: 'right' }}>
+                            <strong>{player.rating}</strong>
+                            <div className="muted" style={{ fontSize: '0.85em' }}>Rating</div>
+                          </div>
+                          <div style={{ textAlign: 'right' }}>
+                            <strong style={{ color: player.fitness >= 80 ? '#4CAF50' : player.fitness >= 50 ? '#FFC107' : '#F44336' }}>
+                              {player.fitness || '?'}
+                            </strong>
+                            <div className="muted" style={{ fontSize: '0.85em' }}>Fitness</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
                 ) : (
                   <p className="muted">Keine Aufstellung verfügbar</p>
                 )}
@@ -801,25 +1113,29 @@ export default function TransferMarket(){
                {selectedTeamDetails.allPlayers && selectedTeamDetails.allPlayers.length > 0 ? (
                  <div style={{ overflowX: 'auto' }}>
                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9em' }}>
-                     <thead>
-                       <tr style={{ borderBottom: '2px solid rgba(255,255,255,0.2)' }}>
-                         <th style={{ padding: '8px', textAlign: 'left' }}>Name</th>
-                         <th style={{ padding: '8px', textAlign: 'center' }}>Pos</th>
-                         <th style={{ padding: '8px', textAlign: 'center' }}>Rating</th>
-                         <th style={{ padding: '8px', textAlign: 'center' }}>Alter</th>
-                         <th style={{ padding: '8px', textAlign: 'center' }}>Land</th>
-                       </tr>
-                     </thead>
-                     <tbody>
-                       {selectedTeamDetails.allPlayers.map((player) => (
-                         <tr key={player.playerId} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                           <td style={{ padding: '8px' }}>{player.playerName}</td>
-                           <td style={{ padding: '8px', textAlign: 'center', color: '#999', fontSize: '0.9em' }}>{player.position}</td>
-                           <td style={{ padding: '8px', textAlign: 'center', fontWeight: 'bold' }}>{player.rating}</td>
-                           <td style={{ padding: '8px', textAlign: 'center', color: '#999' }}>{player.age}</td>
-                           <td style={{ padding: '8px', textAlign: 'center', color: '#999', fontSize: '0.85em' }}>{player.country}</td>
-                         </tr>
-                       ))}
+                      <thead>
+                        <tr style={{ borderBottom: '2px solid rgba(255,255,255,0.2)' }}>
+                          <th style={{ padding: '8px', textAlign: 'left' }}>Name</th>
+                          <th style={{ padding: '8px', textAlign: 'center' }}>Pos</th>
+                          <th style={{ padding: '8px', textAlign: 'center' }}>Rating</th>
+                          <th style={{ padding: '8px', textAlign: 'center' }}>Fitness</th>
+                          <th style={{ padding: '8px', textAlign: 'center' }}>Alter</th>
+                          <th style={{ padding: '8px', textAlign: 'center' }}>Land</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedTeamDetails.allPlayers.map((player) => (
+                          <tr key={player.playerId} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                            <td style={{ padding: '8px' }}>{player.playerName}</td>
+                            <td style={{ padding: '8px', textAlign: 'center', color: '#999', fontSize: '0.9em' }}>{player.position}</td>
+                            <td style={{ padding: '8px', textAlign: 'center', fontWeight: 'bold' }}>{player.rating}</td>
+                            <td style={{ padding: '8px', textAlign: 'center', fontWeight: 'bold', color: player.fitness >= 80 ? '#4CAF50' : player.fitness >= 50 ? '#FFC107' : '#F44336' }}>
+                              {player.fitness || '?'}
+                            </td>
+                            <td style={{ padding: '8px', textAlign: 'center', color: '#999' }}>{player.age}</td>
+                            <td style={{ padding: '8px', textAlign: 'center', color: '#999', fontSize: '0.85em' }}>{player.country}</td>
+                          </tr>
+                        ))}
                      </tbody>
                    </table>
                  </div>
@@ -872,7 +1188,7 @@ export default function TransferMarket(){
               <div>
                 <p><strong>{negotiateOffer.playerName}</strong></p>
                 <div className="muted" style={{ marginBottom: 16 }}>
-                  Aktuelles Gehalt: {formatValue(negotiateOffer.currentSalary || 0)} pro Saison
+                  Aktuelles Gehalt: {formatValue(negotiateOffer.currentSalary || 0)} pro Spieltag
                 </div>
 
                 <div style={{ marginBottom: 16 }}>
@@ -903,12 +1219,15 @@ export default function TransferMarket(){
 
                 <div style={{ marginBottom: 16 }}>
                   <label style={{ display: 'block', marginBottom: 8 }}>
-                    <strong>Gehalt pro Saison</strong>
+                    <strong>Gehalt pro Spieltag</strong>
                     <input
-                      type="number"
-                      min="0"
-                      value={negotiationSalary}
-                      onChange={(e) => setNegotiationSalary(parseInt(e.target.value) || 0)}
+                      type="text"
+                      value={negotiationSalary.toLocaleString('de-DE')}
+                      onChange={(e) => {
+                        const value = e.target.value.replace(/\./g, '').replace(/,/g, '')
+                        const numValue = parseInt(value) || 0
+                        setNegotiationSalary(numValue)
+                      }}
                       style={{
                         width: '100%',
                         padding: '8px',

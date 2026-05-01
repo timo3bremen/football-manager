@@ -209,28 +209,32 @@ export default function Infrastructure(){
   }
 
   // Preisberechnung für Stadionausbau
-  // Stehplätze: Basis
-  // Sitzplätze: 3x teurer
-  // VIP: 9x teurer
+  // Stehplätze: Neue Staffelung
+  // Sitzplätze: 2.5x teurer
+  // VIP: 6x teurer
   const calculateBuildCost = (numSeats, type) => {
-    const planningCost = 50000
+    const planningCost = 500000 // Planungskosten
     let baseCost = 0
 
-    // Basis-Kosten für Stehplätze
+    // Neue Basis-Kosten für Stehplätze (gestaffelt)
     if (numSeats <= 500) {
-      baseCost = numSeats * 2000
+      // Erste 500: 1300€ pro Platz
+      baseCost = numSeats * 1300
     } else if (numSeats <= 2000) {
-      baseCost = 500 * 2000 + (numSeats - 500) * 1500
+      // Erste 500: 1300€, nächste 1500: 1000€
+      baseCost = 500 * 1300 + (numSeats - 500) * 1000
     } else if (numSeats <= 5000) {
-      baseCost = 500 * 2000 + 1500 * 1500 + (numSeats - 2000) * 1250
+      // Erste 500: 1300€, nächste 1500: 1000€, nächste 3000: 800€
+      baseCost = 500 * 1300 + 1500 * 1000 + (numSeats - 2000) * 800
     } else {
-      baseCost = 500 * 2000 + 1500 * 1500 + 3000 * 1250 + (numSeats - 5000) * 1000
+      // Erste 500: 1300€, nächste 1500: 1000€, nächste 3000: 800€, Rest: 700€
+      baseCost = 500 * 1300 + 1500 * 1000 + 3000 * 800 + (numSeats - 5000) * 700
     }
 
     // Multiplikator basierend auf Platztyp
     let multiplier = 1
-    if (type === 'seated') multiplier = 3
-    if (type === 'vip') multiplier = 9
+    if (type === 'seated') multiplier = 2.5
+    if (type === 'vip') multiplier = 6
 
     return planningCost + (baseCost * multiplier)
   }
@@ -545,11 +549,13 @@ export default function Infrastructure(){
               </label>
               <input 
                 className="input" 
-                type="number" 
-                value={buildSeats}
-                onChange={e => setBuildSeats(Math.max(1, Number(e.target.value)))}
-                min="1"
-                step="100"
+                type="text" 
+                value={buildSeats.toLocaleString('de-DE')}
+                onChange={e => {
+                  const value = e.target.value.replace(/\./g, '').replace(/,/g, '')
+                  const numValue = Math.max(1, parseInt(value) || 1)
+                  setBuildSeats(numValue)
+                }}
                 style={{ width: '100%' }}
               />
             </div>
@@ -638,49 +644,49 @@ export default function Infrastructure(){
                  <strong>Kostenberechnung ({buildType === 'standing' ? 'Stehplatz' : buildType === 'seated' ? 'Sitzplatz' : 'VIP'}):</strong>
                </div>
                <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
-                 Planungskosten: €50.000{buildType !== 'standing' ? ` × ${buildType === 'seated' ? 3 : 9} = €${(50000 * (buildType === 'seated' ? 3 : 9)).toLocaleString()}` : ''}
+                 Planungskosten: €500.000{buildType !== 'standing' ? ` × ${buildType === 'seated' ? '2.5' : '6'} = €${(500000 * (buildType === 'seated' ? 2.5 : 6)).toLocaleString()}` : ''}
                </div>
                {buildSeats <= 500 && (
                  <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
-                   {buildSeats} × €{buildType === 'standing' ? '2.000' : buildType === 'seated' ? '6.000' : '18.000'} = €{(buildSeats * (buildType === 'standing' ? 2000 : buildType === 'seated' ? 6000 : 18000)).toLocaleString()}
+                   {buildSeats} × €{buildType === 'standing' ? '1.300' : buildType === 'seated' ? '3.250' : '7.800'} = €{(buildSeats * (buildType === 'standing' ? 1300 : buildType === 'seated' ? 3250 : 7800)).toLocaleString()}
                  </div>
                )}
                {buildSeats > 500 && buildSeats <= 2000 && (
                  <>
                    <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
-                     500 × €{buildType === 'standing' ? '2.000' : buildType === 'seated' ? '6.000' : '18.000'} = €{(500 * (buildType === 'standing' ? 2000 : buildType === 'seated' ? 6000 : 18000)).toLocaleString()}
+                     500 × €{buildType === 'standing' ? '1.300' : buildType === 'seated' ? '3.250' : '7.800'} = €{(500 * (buildType === 'standing' ? 1300 : buildType === 'seated' ? 3250 : 7800)).toLocaleString()}
                    </div>
                    <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
-                     {buildSeats - 500} × €{buildType === 'standing' ? '1.500' : buildType === 'seated' ? '4.500' : '13.500'} = €{((buildSeats - 500) * (buildType === 'standing' ? 1500 : buildType === 'seated' ? 4500 : 13500)).toLocaleString()}
+                     {buildSeats - 500} × €{buildType === 'standing' ? '1.000' : buildType === 'seated' ? '2.500' : '6.000'} = €{((buildSeats - 500) * (buildType === 'standing' ? 1000 : buildType === 'seated' ? 2500 : 6000)).toLocaleString()}
                    </div>
                  </>
                )}
                {buildSeats > 2000 && buildSeats <= 5000 && (
                  <>
                    <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
-                     500 × €{buildType === 'standing' ? '2.000' : buildType === 'seated' ? '6.000' : '18.000'} = €{(500 * (buildType === 'standing' ? 2000 : buildType === 'seated' ? 6000 : 18000)).toLocaleString()}
+                     500 × €{buildType === 'standing' ? '1.300' : buildType === 'seated' ? '3.250' : '7.800'} = €{(500 * (buildType === 'standing' ? 1300 : buildType === 'seated' ? 3250 : 7800)).toLocaleString()}
                    </div>
                    <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
-                     1.500 × €{buildType === 'standing' ? '1.500' : buildType === 'seated' ? '4.500' : '13.500'} = €{(1500 * (buildType === 'standing' ? 1500 : buildType === 'seated' ? 4500 : 13500)).toLocaleString()}
+                     1.500 × €{buildType === 'standing' ? '1.000' : buildType === 'seated' ? '2.500' : '6.000'} = €{(1500 * (buildType === 'standing' ? 1000 : buildType === 'seated' ? 2500 : 6000)).toLocaleString()}
                    </div>
                    <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
-                     {buildSeats - 2000} × €{buildType === 'standing' ? '1.250' : buildType === 'seated' ? '3.750' : '11.250'} = €{((buildSeats - 2000) * (buildType === 'standing' ? 1250 : buildType === 'seated' ? 3750 : 11250)).toLocaleString()}
+                     {buildSeats - 2000} × €{buildType === 'standing' ? '800' : buildType === 'seated' ? '2.000' : '4.800'} = €{((buildSeats - 2000) * (buildType === 'standing' ? 800 : buildType === 'seated' ? 2000 : 4800)).toLocaleString()}
                    </div>
                  </>
                )}
                {buildSeats > 5000 && (
                  <>
                    <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
-                     500 × €{buildType === 'standing' ? '2.000' : buildType === 'seated' ? '6.000' : '18.000'} = €{(500 * (buildType === 'standing' ? 2000 : buildType === 'seated' ? 6000 : 18000)).toLocaleString()}
+                     500 × €{buildType === 'standing' ? '1.300' : buildType === 'seated' ? '3.250' : '7.800'} = €{(500 * (buildType === 'standing' ? 1300 : buildType === 'seated' ? 3250 : 7800)).toLocaleString()}
                    </div>
                    <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
-                     1.500 × €{buildType === 'standing' ? '1.500' : buildType === 'seated' ? '4.500' : '13.500'} = €{(1500 * (buildType === 'standing' ? 1500 : buildType === 'seated' ? 4500 : 13500)).toLocaleString()}
+                     1.500 × €{buildType === 'standing' ? '1.000' : buildType === 'seated' ? '2.500' : '6.000'} = €{(1500 * (buildType === 'standing' ? 1000 : buildType === 'seated' ? 2500 : 6000)).toLocaleString()}
                    </div>
                    <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
-                     3.000 × €{buildType === 'standing' ? '1.250' : buildType === 'seated' ? '3.750' : '11.250'} = €{(3000 * (buildType === 'standing' ? 1250 : buildType === 'seated' ? 3750 : 11250)).toLocaleString()}
+                     3.000 × €{buildType === 'standing' ? '800' : buildType === 'seated' ? '2.000' : '4.800'} = €{(3000 * (buildType === 'standing' ? 800 : buildType === 'seated' ? 2000 : 4800)).toLocaleString()}
                    </div>
                    <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
-                     {buildSeats - 5000} × €{buildType === 'standing' ? '1.000' : buildType === 'seated' ? '3.000' : '9.000'} = €{((buildSeats - 5000) * (buildType === 'standing' ? 1000 : buildType === 'seated' ? 3000 : 9000)).toLocaleString()}
+                     {buildSeats - 5000} × €{buildType === 'standing' ? '700' : buildType === 'seated' ? '1.750' : '4.200'} = €{((buildSeats - 5000) * (buildType === 'standing' ? 700 : buildType === 'seated' ? 1750 : 4200)).toLocaleString()}
                    </div>
                  </>
                )}

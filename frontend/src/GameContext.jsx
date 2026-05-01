@@ -32,7 +32,7 @@ export function GameProvider({children}){
   // league and matchday
   const [currentMatchday, setCurrentMatchday] = useState(1)
   const [gameDay, setGameDay] = useState(0) // Inkrementiert bei jedem Spieltag-Wechsel
-  const [season] = useState(1)
+  const [season, setSeason] = useState(1)
   const [userLeagueId, setUserLeagueId] = useState(null)
   const [userLeagueLabel, setUserLeagueLabel] = useState('Meine Liga')
 
@@ -772,7 +772,7 @@ export function GameProvider({children}){
      // finances
      balance, transactions, addTransaction, addSponsorObject,
       // league and matchday
-      currentMatchday, setCurrentMatchday, gameDay, season,
+      currentMatchday, setCurrentMatchday, gameDay, season, setSeason,
      // NEW: User-Liga
      userLeagueId, setUserLeagueId, userLeagueLabel, setUserLeagueLabel,
      // allow setting team from auth flow

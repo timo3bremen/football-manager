@@ -7,6 +7,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Random;
 import java.util.UUID;
 
@@ -23,9 +24,14 @@ import com.example.manager.dto.MatchEventDTO;
 import com.example.manager.dto.MatchReportDTO;
 import com.example.manager.dto.MatchSimulationResultDTO;
 import com.example.manager.dto.PlayerLineupDTO;
+import com.example.manager.dto.PlayerRatingDTO;
 import com.example.manager.dto.PlayerStatisticsDTO;
 import com.example.manager.dto.TeamDetailsDTO;
+import com.example.manager.model.CupHistory;
+import com.example.manager.model.CupMatch;
+import com.example.manager.model.CupTeam;
 import com.example.manager.model.CupTournament;
+import com.example.manager.model.FreeAgent;
 import com.example.manager.model.GameState;
 import com.example.manager.model.GameStateTracking;
 import com.example.manager.model.League;
@@ -37,12 +43,14 @@ import com.example.manager.model.Matchday;
 import com.example.manager.model.Player;
 import com.example.manager.model.Schedule;
 import com.example.manager.model.Scout;
+import com.example.manager.model.SeasonHistory;
 import com.example.manager.model.Sponsor;
 import com.example.manager.model.StadiumBuild;
 import com.example.manager.model.Team;
 import com.example.manager.model.Transaction;
 import com.example.manager.model.User;
 import com.example.manager.model.YouthPlayer;
+import com.example.manager.repository.CupHistoryRepository;
 import com.example.manager.repository.CupTournamentRepository;
 import com.example.manager.repository.GameStateRepository;
 import com.example.manager.repository.GameStateTrackingRepository;
@@ -55,6 +63,7 @@ import com.example.manager.repository.MatchdayRepository;
 import com.example.manager.repository.PlayerRepository;
 import com.example.manager.repository.ScheduleRepository;
 import com.example.manager.repository.ScoutRepository;
+import com.example.manager.repository.SeasonHistoryRepository;
 import com.example.manager.repository.SponsorRepository;
 import com.example.manager.repository.StadiumBuildRepository;
 import com.example.manager.repository.StadiumPartRepository;
@@ -126,6 +135,36 @@ public class RepositoryService {
 	@Autowired
 	private CupTournamentRepository cupTournamentRepository;
 
+	@Autowired
+	private com.example.manager.repository.CupTeamRepository cupTeamRepository;
+
+	@Autowired
+	private com.example.manager.repository.CupMatchRepository cupMatchRepository;
+
+	@Autowired
+	private SeasonHistoryRepository seasonHistoryRepository;
+
+	@Autowired
+	private CupHistoryRepository cupHistoryRepository;
+
+	@Autowired
+	private CpuTeamAIService cpuTeamAIService;
+
+	@Autowired
+	private CpuLineupOptimizerService cpuLineupOptimizerService;
+
+	@Autowired
+	private AuctionService auctionService;
+
+	@Autowired
+	private PlayerRatingService playerRatingService;
+
+	@Autowired
+	private com.example.manager.repository.FreeAgentRepository freeAgentRepository;
+
+	@Autowired
+	private com.example.manager.repository.FreeAgentOfferRepository freeAgentOfferRepository;
+
 	private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 	private final Map<String, String> sessions = new HashMap<>(); // token -> username
 	private final Random random = new Random();
@@ -163,33 +202,25 @@ public class RepositoryService {
 			throw new IllegalArgumentException("league not found");
 		}
 
-		// Finde zufälligen gefüllten Slot (CPU-Team) der ersetzt werden soll
-		List<LeagueSlot> filledSlots = new ArrayList<>();
+		// Finde alle CPU-Team-Slots (nicht User-Teams!)
+		List<LeagueSlot> cpuTeamSlots = new ArrayList<>();
 		for (LeagueSlot slot : league.getSlots()) {
 			if (slot.getTeamId() != null) {
-				filledSlots.add(slot);
+				Team team = teamRepository.findById(slot.getTeamId()).orElse(null);
+				if (team != null && team.isCPU()) {
+					cpuTeamSlots.add(slot);
+				}
 			}
 		}
 
-		// Wenn keine gefüllten Slots vorhanden, erstelle neues Team
-		if (filledSlots.isEmpty()) {
-			Team team = new Team(teamName, 1000000);
-			team.setCPU(false); // Markiere als User-Team (kein CPU-Team)
-			team = saveTeam(team);
-			LeagueSlot emptySlot = league.addTeam(team);
-			if (emptySlot != null) {
-				leagueSlotRepository.save(emptySlot);
-			}
-			// Erstelle User mit Liga-Zuordnung
-			User user = new User(username, passwordEncoder.encode(password), team.getId(), leagueId);
-			userRepository.save(user);
-			String token = UUID.randomUUID().toString();
-			sessions.put(token, username);
-			return token;
+		// Wenn keine CPU-Teams verfügbar, werfe Fehler
+		if (cpuTeamSlots.isEmpty()) {
+			throw new IllegalArgumentException(
+					"Keine CPU-Teams in dieser Liga verfügbar. Alle Teams werden bereits von Spielern kontrolliert.");
 		}
 
 		// Wähle zufälligen CPU-Team Slot aus
-		LeagueSlot randomSlot = filledSlots.get(random.nextInt(filledSlots.size()));
+		LeagueSlot randomSlot = cpuTeamSlots.get(random.nextInt(cpuTeamSlots.size()));
 		Long oldTeamId = randomSlot.getTeamId();
 
 		// WICHTIG: Aktualisiere BESTEHENDES Team statt neues zu erstellen!
@@ -205,6 +236,9 @@ public class RepositoryService {
 		oldTeam.setCPU(false); // Markiere als User-Team (kein CPU-Team mehr)
 		teamRepository.save(oldTeam);
 
+		// Aktualisiere auch CupTeam-Einträge für dieses Team
+		updateCupTeamsForTeam(oldTeamId, teamName);
+
 		// Verwende oldTeamId als Team-ID für den neuen User
 		Long userTeamId = oldTeamId;
 
@@ -213,11 +247,51 @@ public class RepositoryService {
 		userRepository.save(user);
 
 		System.out.println("[RepositoryService] Benutzer '" + username + "' registriert in Liga " + leagueId
-				+ " mit bestehendem Team " + oldTeamId + " (" + oldTeam.getName() + ")");
+				+ " mit CPU-Team " + oldTeamId + " (" + oldTeam.getName() + ") - Team übernommen!");
 
 		String token = UUID.randomUUID().toString();
 		sessions.put(token, username);
 		return token;
+	}
+
+	/**
+	 * Aktualisiert CupTeam-Einträge und CupMatch-Einträge für ein Team (Name wird
+	 * aktualisiert)
+	 */
+	private void updateCupTeamsForTeam(Long teamId, String newTeamName) {
+		try {
+			// Aktualisiere CupTeam-Einträge
+			List<CupTeam> cupTeams = cupTeamRepository.findByTeamId(teamId);
+			if (!cupTeams.isEmpty()) {
+				for (CupTeam cupTeam : cupTeams) {
+					cupTeam.setTeamName(newTeamName);
+					cupTeamRepository.save(cupTeam);
+				}
+				System.out.println(
+						"[RepositoryService] Aktualisiert " + cupTeams.size() + " CupTeam-Einträge für Team " + teamId);
+			}
+
+			// Aktualisiere CupMatch-Einträge (sowohl als HomeTeam als auch als AwayTeam)
+			List<CupMatch> homeMatches = cupMatchRepository.findByHomeTeamId(teamId);
+			List<CupMatch> awayMatches = cupMatchRepository.findByAwayTeamId(teamId);
+
+			for (CupMatch match : homeMatches) {
+				match.setHomeTeamName(newTeamName);
+				cupMatchRepository.save(match);
+			}
+
+			for (CupMatch match : awayMatches) {
+				match.setAwayTeamName(newTeamName);
+				cupMatchRepository.save(match);
+			}
+
+			if (!homeMatches.isEmpty() || !awayMatches.isEmpty()) {
+				System.out.println("[RepositoryService] Aktualisiert " + (homeMatches.size() + awayMatches.size())
+						+ " CupMatch-Einträge für Team " + teamId);
+			}
+		} catch (Exception e) {
+			System.err.println("[RepositoryService] Fehler beim Aktualisieren der CupTeams/Matches: " + e.getMessage());
+		}
 	}
 
 	public String authenticateUser(String username, String password) {
@@ -670,21 +744,62 @@ public class RepositoryService {
 		for (int i = 0; i < numGK && i < gk.size(); i++) {
 			assignment.put(slotIndex++, gk.get(i).getId());
 		}
+		// Falls kein GK: Slot leer lassen aber Index erhöhen
+		if (gk.isEmpty()) {
+			slotIndex += numGK;
+		}
 
 		// DEF slots
+		int assignedDef = 0;
 		for (int i = 0; i < numDEF && i < def.size(); i++) {
 			assignment.put(slotIndex++, def.get(i).getId());
+			assignedDef++;
+		}
+		// Falls nicht genug DEF: Nutze MID als Ersatz
+		if (assignedDef < numDEF) {
+			int needed = numDEF - assignedDef;
+			for (int i = 0; i < needed && i < mid.size(); i++) {
+				assignment.put(slotIndex++, mid.get(i).getId());
+				mid.remove(i);
+				i--;
+				assignedDef++;
+			}
 		}
 
 		// MID slots
+		int assignedMid = 0;
 		for (int i = 0; i < numMID && i < mid.size(); i++) {
 			assignment.put(slotIndex++, mid.get(i).getId());
+			assignedMid++;
+		}
+		// Falls nicht genug MID: Nutze FWD als Ersatz
+		if (assignedMid < numMID) {
+			int needed = numMID - assignedMid;
+			for (int i = 0; i < needed && i < fwd.size(); i++) {
+				assignment.put(slotIndex++, fwd.get(i).getId());
+				fwd.remove(i);
+				i--;
+				assignedMid++;
+			}
 		}
 
 		// FWD slots
+		int assignedFwd = 0;
 		for (int i = 0; i < numFWD && i < fwd.size(); i++) {
 			assignment.put(slotIndex++, fwd.get(i).getId());
+			assignedFwd++;
 		}
+		// Falls nicht genug FWD: Nutze übrige DEF als Ersatz
+		if (assignedFwd < numFWD && def.size() > assignedDef) {
+			int needed = numFWD - assignedFwd;
+			for (int i = assignedDef; i < def.size() && (i - assignedDef) < needed; i++) {
+				assignment.put(slotIndex++, def.get(i).getId());
+				assignedFwd++;
+			}
+		}
+
+		System.out.println("[AutoAssign] Assigned " + assignment.size() + " players (GK:" + Math.min(numGK, gk.size())
+				+ ", DEF:" + assignedDef + ", MID:" + assignedMid + ", FWD:" + assignedFwd + ")");
 
 		return assignment;
 	}
@@ -795,7 +910,7 @@ public class RepositoryService {
 		// Erstelle CPU-Teams für diese Liga
 		for (int i = 0; i < numTeams; i++) {
 			String teamName = TeamNameGenerator.generateTeamName();
-			Team cpuTeam = new Team(teamName, 1000000);
+			Team cpuTeam = new Team(teamName, 10_000_000); // Initial 10M Budget
 			cpuTeam = teamRepository.save(cpuTeam);
 
 			// Initialisiere Spieler mit divisions-abhängigen Stärken und Stadionteile
@@ -820,48 +935,59 @@ public class RepositoryService {
 	}
 
 	/**
-	 * Initialisiert die Spieler für ein Team mit einer Mischung aus verschiedenen Division-Ratings
+	 * Initialisiert die Spieler für ein Team mit einer Mischung aus verschiedenen
+	 * Division-Ratings
 	 * 
-	 * 1. Liga Team: 12 Spieler Division 1, 4 Spieler Division 2, 2 Spieler Division 3
-	 * 2. Liga Team: 2 Spieler Division 1, 12 Spieler Division 2, 4 Spieler Division 3
-	 * 3. Liga Team: 0 Spieler Division 1, 4 Spieler Division 2, 14 Spieler Division 3
+	 * 1. Liga Team: 12 Spieler Division 1, 4 Spieler Division 2, 2 Spieler Division
+	 * 3 2. Liga Team: 2 Spieler Division 1, 12 Spieler Division 2, 4 Spieler
+	 * Division 3 3. Liga Team: 0 Spieler Division 1, 4 Spieler Division 2, 14
+	 * Spieler Division 3
 	 * 
 	 * Die Positionen werden zufällig aus allen verfügbaren Positionen zugewiesen
 	 * 70% der Spieler stammen aus dem angegebenen Land, 30% sind zufällig
 	 */
 	private void initializeTeamPlayers(Team team, int division, String country) {
-		String[] allPositions = { "GK", "GK", "DEF", "DEF", "DEF", "DEF", "DEF", "DEF", "MID", "MID", "MID", "MID", "MID",
-				"MID", "MID", "FWD", "FWD", "FWD" };
+		String[] allPositions = { "GK", "GK", "DEF", "DEF", "DEF", "DEF", "DEF", "DEF", "MID", "MID", "MID", "MID",
+				"MID", "MID", "MID", "FWD", "FWD", "FWD" };
 
 		Random rand = new Random();
 		List<Player> createdPlayers = new ArrayList<>();
-		
-		// Bestimme die Verteilung der Spieler nach Division basierend auf der Team-Division
+
+		// Bestimme die Verteilung der Spieler nach Division basierend auf der
+		// Team-Division
 		List<Integer> playerDivisions = new ArrayList<>();
-		
+
 		if (division == 1) {
 			// 1. Liga: 12x Div1, 4x Div2, 2x Div3
-			for (int i = 0; i < 12; i++) playerDivisions.add(1);
-			for (int i = 0; i < 4; i++) playerDivisions.add(2);
-			for (int i = 0; i < 2; i++) playerDivisions.add(3);
+			for (int i = 0; i < 12; i++)
+				playerDivisions.add(1);
+			for (int i = 0; i < 4; i++)
+				playerDivisions.add(2);
+			for (int i = 0; i < 2; i++)
+				playerDivisions.add(3);
 		} else if (division == 2) {
 			// 2. Liga: 2x Div1, 12x Div2, 4x Div3
-			for (int i = 0; i < 2; i++) playerDivisions.add(1);
-			for (int i = 0; i < 12; i++) playerDivisions.add(2);
-			for (int i = 0; i < 4; i++) playerDivisions.add(3);
+			for (int i = 0; i < 2; i++)
+				playerDivisions.add(1);
+			for (int i = 0; i < 12; i++)
+				playerDivisions.add(2);
+			for (int i = 0; i < 4; i++)
+				playerDivisions.add(3);
 		} else {
 			// 3. Liga: 0x Div1, 4x Div2, 14x Div3
-			for (int i = 0; i < 4; i++) playerDivisions.add(2);
-			for (int i = 0; i < 14; i++) playerDivisions.add(3);
+			for (int i = 0; i < 4; i++)
+				playerDivisions.add(2);
+			for (int i = 0; i < 14; i++)
+				playerDivisions.add(3);
 		}
-		
+
 		// Shuffle die Divisions-Liste für zufällige Reihenfolge
 		Collections.shuffle(playerDivisions, rand);
-		
+
 		// Shuffle die Positionen für zufällige Zuweisung
 		List<String> positionsList = new ArrayList<>(Arrays.asList(allPositions));
 		Collections.shuffle(positionsList, rand);
-		
+
 		// Bestimme welche Spieler aus dem Land stammen (70%) und welche zufällig (30%)
 		List<Boolean> countryFlags = new ArrayList<>();
 		for (int i = 0; i < 18; i++) {
@@ -870,7 +996,7 @@ public class RepositoryService {
 
 		for (int i = 0; i < 18; i++) {
 			String[] playerData;
-			
+
 			// Bestimme das Land für diesen Spieler
 			if (countryFlags.get(i)) {
 				// Spieler aus dem angegebenen Land
@@ -879,10 +1005,10 @@ public class RepositoryService {
 				// Zufälliger Spieler aus beliebigem Land
 				playerData = PlayerNameGenerator.generatePlayerNameAndCountry();
 			}
-			
+
 			// Wähle die Division für diesen Spieler
 			int playerDivision = playerDivisions.get(i);
-			
+
 			// Wähle eine zufällige Position aus der gemischten Liste
 			String position = positionsList.get(i);
 
@@ -900,12 +1026,13 @@ public class RepositoryService {
 			p.setSalary(salary);
 			p.setContractLength(contractLength);
 			p.setTeamId(team.getId());
+			p.setFitness(100); // Initial 100% Fitness
 			p.calculateMarketValue();
 			playerRepository.save(p);
 			createdPlayers.add(p);
 		}
 	}
-	
+
 	/**
 	 * Generiert einen Spielernamen und ein Land basierend auf dem angegebenen Land
 	 * Wählt Namen und Nachnamen aus den Namenslisten des angegebenen Landes
@@ -914,39 +1041,37 @@ public class RepositoryService {
 		// Deutsche Namen für Deutschland
 		if ("Deutschland".equals(country)) {
 			String[] germanFirstNames = { "Stefan", "Klaus", "Ralf", "Jürgen", "Thomas", "Michael", "Franz", "Werner",
-					"Hans", "Günther", "Hermann", "Peter", "Wolfgang", "Karl", "Friedrich",
-					"Dieter", "Horst", "Helmut", "Dietmar", "Lothar", "Gerhard", "Joachim", "Bernhard",
-					"Udo", "Siegfried", "Reinhard", "Manfred", "Kurt", "Bruno", "Wilfried", "Erwin" };
+					"Hans", "Günther", "Hermann", "Peter", "Wolfgang", "Karl", "Friedrich", "Dieter", "Horst", "Helmut",
+					"Dietmar", "Lothar", "Gerhard", "Joachim", "Bernhard", "Udo", "Siegfried", "Reinhard", "Manfred",
+					"Kurt", "Bruno", "Wilfried", "Erwin" };
 			String[] germanLastNames = { "Müller", "Schmidt", "Schneider", "Fischer", "Weber", "Wagner", "Becker",
-					"Schäfer", "Schulze", "Hoffmann", "Schroeder", "Koch", "Bauer", "Richter",
-					"Krüger", "Huber", "Kaiser", "Schmitt", "Groß", "Braun", "Hartmann",
-					"Sauer", "Keller", "Neumann", "Schwarz", "Klein", "Wolf", "Schäfer",
-					"Lehmann", "Zimmermann", "Wirth", "Winter", "Wolff", "Krämer", "Lange",
-					"Voigt", "Dauer", "Pfeiffer", "Lorenz", "Pauer", "Reichel", "Strassburg" };
-			
+					"Schäfer", "Schulze", "Hoffmann", "Schroeder", "Koch", "Bauer", "Richter", "Krüger", "Huber",
+					"Kaiser", "Schmitt", "Groß", "Braun", "Hartmann", "Sauer", "Keller", "Neumann", "Schwarz", "Klein",
+					"Wolf", "Schäfer", "Lehmann", "Zimmermann", "Wirth", "Winter", "Wolff", "Krämer", "Lange", "Voigt",
+					"Dauer", "Pfeiffer", "Lorenz", "Pauer", "Reichel", "Strassburg" };
+
 			String firstName = germanFirstNames[rand.nextInt(germanFirstNames.length)];
 			String lastName = germanLastNames[rand.nextInt(germanLastNames.length)];
-			return new String[]{firstName + " " + lastName, "Germany"};
+			return new String[] { firstName + " " + lastName, "Germany" };
 		}
-		
+
 		// Spanische Namen für Spanien
 		if ("Spanien".equals(country)) {
 			String[] spanishFirstNames = { "Carlos", "José", "Manuel", "Juan", "Diego", "Miguel", "Luis", "Antonio",
-					"Fernando", "Rafael", "Ricardo", "Pablo", "Javier", "Andrés", "Guillermo",
-					"Eduardo", "Sergio", "Alberto", "Roberto", "Raúl", "Ángel", "Víctor", "Enrique",
-					"Francisco", "Salvador", "Jesús", "Ignacio", "Mateo", "Felipe", "Alonso" };
-			String[] spanishLastNames = { "García", "Martínez", "González", "Rodríguez", "Hernández", "López",
-					"Pérez", "Sánchez", "Moreno", "Jiménez", "Díaz", "Ramírez", "Reyes",
-					"Cruza", "Vázquez", "Castro", "Domínguez", "Ruiz",
-					"Alvarez", "Arellano", "Asencio", "Ayala", "Baeza", "Bances", "Bandera",
-					"Barbar", "Barbero", "Barrera", "Bastida", "Bautista", "Benavides", "Benedetti",
-					"Benítez", "Benavente", "Cabeza", "Cabezas", "Cabral", "Cabrera", "Cabriales" };
-			
+					"Fernando", "Rafael", "Ricardo", "Pablo", "Javier", "Andrés", "Guillermo", "Eduardo", "Sergio",
+					"Alberto", "Roberto", "Raúl", "Ángel", "Víctor", "Enrique", "Francisco", "Salvador", "Jesús",
+					"Ignacio", "Mateo", "Felipe", "Alonso" };
+			String[] spanishLastNames = { "García", "Martínez", "González", "Rodríguez", "Hernández", "López", "Pérez",
+					"Sánchez", "Moreno", "Jiménez", "Díaz", "Ramírez", "Reyes", "Cruza", "Vázquez", "Castro",
+					"Domínguez", "Ruiz", "Alvarez", "Arellano", "Asencio", "Ayala", "Baeza", "Bances", "Bandera",
+					"Barbar", "Barbero", "Barrera", "Bastida", "Bautista", "Benavides", "Benedetti", "Benítez",
+					"Benavente", "Cabeza", "Cabezas", "Cabral", "Cabrera", "Cabriales" };
+
 			String firstName = spanishFirstNames[rand.nextInt(spanishFirstNames.length)];
 			String lastName = spanishLastNames[rand.nextInt(spanishLastNames.length)];
-			return new String[]{firstName + " " + lastName, "Spain"};
+			return new String[] { firstName + " " + lastName, "Spain" };
 		}
-		
+
 		// Fallback: zufällige Spieler
 		return PlayerNameGenerator.generatePlayerNameAndCountry();
 	}
@@ -1025,6 +1150,9 @@ public class RepositoryService {
 		long totalCapacity = team.getStadiumCapacity();
 		dto.setStadiumCapacity((int) totalCapacity);
 
+		// Füge Budget hinzu (für Test-Zwecke)
+		dto.setBudget(team.getBudgetAsLong());
+
 		// Find league info for this team
 		List<League> allLeagues = leagueRepository.findAll();
 		for (League league : allLeagues) {
@@ -1044,6 +1172,8 @@ public class RepositoryService {
 				if (p != null) {
 					PlayerLineupDTO playerDto = new PlayerLineupDTO(p.getId(), p.getName(), p.getPosition(),
 							p.getRating(), slot.getSlotIndex());
+					playerDto.setFitness(p.getFitness()); // Setze Fitness
+					playerDto.setAge(p.getAge()); // Setze Alter
 					dto.getLineup().add(playerDto);
 				}
 			}
@@ -1053,6 +1183,7 @@ public class RepositoryService {
 		for (Player p : allPlayers) {
 			PlayerLineupDTO playerDto = new PlayerLineupDTO(p.getId(), p.getName(), p.getPosition(), p.getRating(),
 					p.getAge(), p.getCountry());
+			playerDto.setFitness(p.getFitness()); // Setze Fitness
 			dto.getAllPlayers().add(playerDto);
 		}
 
@@ -1312,9 +1443,15 @@ public class RepositoryService {
 		return tracking.getCurrentMatchday();
 	}
 
+	public int getCurrentSeason() {
+		GameStateTracking tracking = getOrCreateGameStateTracking();
+		return tracking.getCurrentSeason();
+	}
+
 	/**
 	 * Simulates a single match based on team strength. Only allows simulation of
-	 * matches in the current matchday.
+	 * matches in the current matchday. Prüft auch ob Teams genug Spieler haben
+	 * (min. 7)
 	 */
 	@Transactional
 	public MatchSimulationResultDTO simulateMatch(Long matchId) {
@@ -1343,12 +1480,54 @@ public class RepositoryService {
 			throw new IllegalArgumentException("Cannot simulate: one or both teams are null");
 		}
 
-		int homeStrength = calculateTeamStrength(homeTeamId);
-		int awayStrength = calculateTeamStrength(awayTeamId);
+		// Prüfe ob Teams genug Spieler in der Aufstellung haben (min. 7)
+		Team homeTeam = teamRepository.findById(homeTeamId).orElse(null);
+		Team awayTeam = teamRepository.findById(awayTeamId).orElse(null);
 
-		// Generate goals based on strength
-		int homeGoals = generateGoals(homeStrength, awayStrength);
-		int awayGoals = generateGoals(awayStrength, homeStrength);
+		if (homeTeam == null || awayTeam == null) {
+			throw new IllegalArgumentException("Teams not found");
+		}
+
+		String homeFormation = homeTeam.getActiveFormation() != null ? homeTeam.getActiveFormation() : "4-4-2";
+		String awayFormation = awayTeam.getActiveFormation() != null ? awayTeam.getActiveFormation() : "4-4-2";
+
+		List<LineupSlot> homeLineup = lineupRepository.findByTeamIdAndFormationId(homeTeamId, homeFormation);
+		List<LineupSlot> awayLineup = lineupRepository.findByTeamIdAndFormationId(awayTeamId, awayFormation);
+
+		int homePlayers = (int) homeLineup.stream().filter(s -> s.getPlayerId() != null).count();
+		int awayPlayers = (int) awayLineup.stream().filter(s -> s.getPlayerId() != null).count();
+
+		int homeGoals, awayGoals;
+
+		// Wenn ein Team weniger als 7 Spieler hat: Automatische 0:3 Niederlage
+		if (homePlayers < 7 && awayPlayers < 7) {
+			// Beide Teams zu wenig Spieler: 0:0
+			System.out.println("[Match] ⚠️ Beide Teams haben zu wenig Spieler! Wertung 0:0");
+			homeGoals = 0;
+			awayGoals = 0;
+		} else if (homePlayers < 7) {
+			System.out.println(
+					"[Match] ⚠️ " + homeTeam.getName() + " hat zu wenig Spieler (<7)! Automatische 0:3 Niederlage!");
+			homeGoals = 0;
+			awayGoals = 3;
+		} else if (awayPlayers < 7) {
+			System.out
+					.println("[Match] ⚠️ " + awayTeam.getName() + " hat zu wenig Spieler (<7)! Automatische 3:0 Sieg!");
+			homeGoals = 3;
+			awayGoals = 0;
+		} else {
+			// Normale Simulation
+			int homeStrength = calculateTeamStrength(homeTeamId);
+			int awayStrength = calculateTeamStrength(awayTeamId);
+
+			// Generate goals based on strength
+			homeGoals = generateGoals(homeStrength, awayStrength);
+			awayGoals = generateGoals(awayStrength, homeStrength);
+
+			// Berechne Zuschauereinnahmen und aktualisiere Fanfreundschaft (nur für
+			// HomeTeam)
+			processAttendanceRevenue(match, homeTeamId, awayTeamId, homeGoals, awayGoals, homeStrength, awayStrength);
+		}
 
 		// Determine result
 		String result;
@@ -1378,45 +1557,30 @@ public class RepositoryService {
 		deductPlayerSalaries(awayTeamId);
 
 		// Train players from both teams who were in the lineup
-		Team homeTeamForTraining = teamRepository.findById(homeTeamId).orElse(null);
-		Team awayTeamForTraining = teamRepository.findById(awayTeamId).orElse(null);
-		String homeFormationForTraining = (homeTeamForTraining != null
-				&& homeTeamForTraining.getActiveFormation() != null) ? homeTeamForTraining.getActiveFormation()
-						: "4-4-2";
-		String awayFormationForTraining = (awayTeamForTraining != null
-				&& awayTeamForTraining.getActiveFormation() != null) ? awayTeamForTraining.getActiveFormation()
-						: "4-4-2";
-		trainPlayersAfterMatch(homeTeamId, homeFormationForTraining);
-		trainPlayersAfterMatch(awayTeamId, awayFormationForTraining);
+		trainPlayersAfterMatch(homeTeamId, homeFormation);
+		trainPlayersAfterMatch(awayTeamId, awayFormation);
 
 		// Trainiere Akademie-Spieler beider Teams nach dem Spieltag
 		trainAcademyPlayers(homeTeamId);
 		trainAcademyPlayers(awayTeamId);
 
-		// Berechne Zuschauereinnahmen und aktualisiere Fanfreundschaft (nur für
-		// HomeTeam)
-		processAttendanceRevenue(match, homeTeamId, awayTeamId, homeGoals, awayGoals, homeStrength, awayStrength);
-
-		// Get team names
-		Team homeTeam = teamRepository.findById(homeTeamId).orElse(null);
-		Team awayTeam = teamRepository.findById(awayTeamId).orElse(null);
-		String homeTeamName = homeTeam != null ? homeTeam.getName() : "Unknown";
-		String awayTeamName = awayTeam != null ? awayTeam.getName() : "Unknown";
+		// Get team names for response
+		String homeTeamName = homeTeam.getName();
+		String awayTeamName = awayTeam.getName();
 
 		return new MatchSimulationResultDTO(matchId, homeTeamId, awayTeamId, homeTeamName, awayTeamName, homeGoals,
 				awayGoals, result);
 	}
 
 	/**
-	 * Trainiert alle Spieler eines Teams, die in der Aufstellung waren Jede
-	 * Fähigkeit hat 10% Chance um 1 zu wachsen (wenn unter dem Potential)
+	 * Trainiert Spieler nach einem Spiel Jede Fähigkeit hat eine note-abhängige
+	 * Chance um 1 zu wachsen
 	 */
 	private void trainPlayersAfterMatch(Long teamId, String formationId) {
 		try {
 			// Lade die aktuelle Aufstellung des Teams mit der angegebenen Formation
 			List<LineupSlot> lineup = lineupRepository.findByTeamIdAndFormationId(teamId, formationId);
 
-			Random rand = new Random();
 			int trainedCount = 0;
 			int skillsImproved = 0;
 
@@ -1427,8 +1591,15 @@ public class RepositoryService {
 						// Zähle verbesserte Skills vor Training
 						int skillsBefore = getSkillCount(player);
 
-						// Trainiere den Spieler
-						player.trainAfterMatch(rand);
+						// Für reguläre Matches (ohne detaillierte Events) verwende vereinfachte
+						// Notenvergabe
+						// Generiere eine zufällige Note zwischen 2.5 und 4.5 (durchschnittlich)
+						// mit Tendenz zu 3.5 (durchschnittlich)
+						double rating = 2.5 + (random.nextGaussian() * 0.5 + 1.0); // Normalverteilung um 3.5
+						rating = Math.max(2.5, Math.min(4.5, rating)); // Begrenze auf 2.5 - 4.5
+
+						// Trainiere basierend auf Note
+						playerRatingService.trainPlayerByRating(player, rating);
 
 						// Zähle verbesserte Skills nach Training
 						int skillsAfter = getSkillCount(player);
@@ -1500,65 +1671,67 @@ public class RepositoryService {
 				occupancyMax = 0.10; // 0-10%
 			}
 
-		// Zufällige Auslastung im Bereich
-		double occupancy = occupancyMin + (occupancyMax - occupancyMin) * random.nextDouble();
+			// Zufällige Auslastung im Bereich
+			double occupancy = occupancyMin + (occupancyMax - occupancyMin) * random.nextDouble();
 
-		// 2. Lade Stadion-Kapazitäten (3 getrennte Platztypen)
-		long standingSeats = homeTeam.getStadiumCapacityStanding() != null ? homeTeam.getStadiumCapacityStanding() : 1000L;
-		long seatedSeats = homeTeam.getStadiumCapacitySeated() != null ? homeTeam.getStadiumCapacitySeated() : 0L;
-		long vipSeats = homeTeam.getStadiumCapacityVip() != null ? homeTeam.getStadiumCapacityVip() : 0L;
-		
-		// 2.5. Lade Ticketpreise
-		int ticketPriceStanding = homeTeam.getTicketPriceStanding();
-		int ticketPriceSeated = homeTeam.getTicketPriceSeated();
-		int ticketPriceVip = homeTeam.getTicketPriceVip();
+			// 2. Lade Stadion-Kapazitäten (3 getrennte Platztypen)
+			long standingSeats = homeTeam.getStadiumCapacityStanding() != null ? homeTeam.getStadiumCapacityStanding()
+					: 1000L;
+			long seatedSeats = homeTeam.getStadiumCapacitySeated() != null ? homeTeam.getStadiumCapacitySeated() : 0L;
+			long vipSeats = homeTeam.getStadiumCapacityVip() != null ? homeTeam.getStadiumCapacityVip() : 0L;
 
-		// 2.6. NEUE LOGIK: Preis-basierte Auslastungs-Reduktion
-		// "Normale" Preis-Bereiche: Steh 20-40€, Sitz 40-80€, VIP 80-200€
-		// Bei zu hohen Preisen: Drastische Reduktion der Auslastung für diesen Platztyp
-		
-		double standingOccupancyModifier = calculatePriceOccupancyModifier(ticketPriceStanding, 20, 40, 60, 100);
-		double seatedOccupancyModifier = calculatePriceOccupancyModifier(ticketPriceSeated, 40, 80, 120, 200);
-		double vipOccupancyModifier = calculatePriceOccupancyModifier(ticketPriceVip, 80, 200, 300, 500);
+			// 2.5. Lade Ticketpreise
+			int ticketPriceStanding = homeTeam.getTicketPriceStanding();
+			int ticketPriceSeated = homeTeam.getTicketPriceSeated();
+			int ticketPriceVip = homeTeam.getTicketPriceVip();
 
-		// 3. Berechne Zuschauerzahlen mit preis-basierter Reduktion
-		// VIP-Plätze: Auslastung direkt anwenden × Preis-Modifier
-		long vipAttendance = (long) (vipSeats * occupancy * vipOccupancyModifier);
-		
-		// Steh- und Sitzplätze: Werden entsprechend Auslastung gefüllt × Preis-Modifier
-		long standingAttendance = (long) (standingSeats * occupancy * standingOccupancyModifier);
-		long seatedAttendance = (long) (seatedSeats * occupancy * seatedOccupancyModifier);
+			// 2.6. NEUE LOGIK: Preis-basierte Auslastungs-Reduktion
+			// "Normale" Preis-Bereiche: Steh 20-40€, Sitz 40-80€, VIP 80-200€
+			// Bei zu hohen Preisen: Drastische Reduktion der Auslastung für diesen Platztyp
 
-		long totalAttendance = standingAttendance + seatedAttendance + vipAttendance;
+			double standingOccupancyModifier = calculatePriceOccupancyModifier(ticketPriceStanding, 20, 40, 60, 100);
+			double seatedOccupancyModifier = calculatePriceOccupancyModifier(ticketPriceSeated, 40, 80, 120, 200);
+			double vipOccupancyModifier = calculatePriceOccupancyModifier(ticketPriceVip, 80, 200, 300, 500);
 
-		// Speichere Zuschauerzahl im Match
-		match.setAttendance(totalAttendance);
-		matchRepository.save(match);
+			// 3. Berechne Zuschauerzahlen mit preis-basierter Reduktion
+			// VIP-Plätze: Auslastung direkt anwenden × Preis-Modifier
+			long vipAttendance = (long) (vipSeats * occupancy * vipOccupancyModifier);
 
-		// 4. Berechne Einnahmen (bereits geladene Ticketpreise verwenden)
-		long standingRevenue = standingAttendance * ticketPriceStanding;
-		long seatedRevenue = seatedAttendance * ticketPriceSeated;
-		long vipRevenue = vipAttendance * ticketPriceVip;
-		long totalRevenue = standingRevenue + seatedRevenue + vipRevenue;
+			// Steh- und Sitzplätze: Werden entsprechend Auslastung gefüllt × Preis-Modifier
+			long standingAttendance = (long) (standingSeats * occupancy * standingOccupancyModifier);
+			long seatedAttendance = (long) (seatedSeats * occupancy * seatedOccupancyModifier);
 
-		// 5. Füge Einnahmen zum Budget hinzu
-		homeTeam.setBudgetAsLong(homeTeam.getBudgetAsLong() + totalRevenue);
-		
-		// 6. Speichere als Transaktion
-		Transaction transaction = new Transaction(homeTeamId, totalRevenue, "income",
-				"Zuschauereinnahmen (" + totalAttendance + " Zuschauer)", "attendance");
-		transactionRepository.save(transaction);
+			long totalAttendance = standingAttendance + seatedAttendance + vipAttendance;
 
-		System.out.println("[Attendance] Team " + homeTeam.getName() + ": " + totalAttendance 
-				+ " Zuschauer (Steh: " + standingAttendance + ", Sitz: " + seatedAttendance + ", VIP: " + vipAttendance 
-				+ ") → " + totalRevenue + "€ Einnahmen");
-		System.out.println("[Attendance] Auslastung: " + Math.round(occupancy * 100) + "%, Preis-Modifier: Steh=" 
-				+ Math.round(standingOccupancyModifier * 100) + "%, Sitz=" + Math.round(seatedOccupancyModifier * 100) 
-				+ "%, VIP=" + Math.round(vipOccupancyModifier * 100) + "%");
-		System.out.println("[Attendance] Ticketpreise: Steh=" + ticketPriceStanding + "€, Sitz=" + ticketPriceSeated 
-				+ "€, VIP=" + ticketPriceVip + "€");
+			// Speichere Zuschauerzahl im Match
+			match.setAttendance(totalAttendance);
+			matchRepository.save(match);
 
-		// 7. Aktualisiere Fanfreundschaft basierend auf Spielergebnis und Ticketpreisen
+			// 4. Berechne Einnahmen (bereits geladene Ticketpreise verwenden)
+			long standingRevenue = standingAttendance * ticketPriceStanding;
+			long seatedRevenue = seatedAttendance * ticketPriceSeated;
+			long vipRevenue = vipAttendance * ticketPriceVip;
+			long totalRevenue = standingRevenue + seatedRevenue + vipRevenue;
+
+			// 5. Füge Einnahmen zum Budget hinzu
+			homeTeam.setBudgetAsLong(homeTeam.getBudgetAsLong() + totalRevenue);
+
+			// 6. Speichere als Transaktion
+			Transaction transaction = new Transaction(homeTeamId, totalRevenue, "income",
+					"Zuschauereinnahmen (" + totalAttendance + " Zuschauer)", "attendance");
+			transactionRepository.save(transaction);
+
+			System.out.println("[Attendance] Team " + homeTeam.getName() + ": " + totalAttendance + " Zuschauer (Steh: "
+					+ standingAttendance + ", Sitz: " + seatedAttendance + ", VIP: " + vipAttendance + ") → "
+					+ totalRevenue + "€ Einnahmen");
+			System.out.println("[Attendance] Auslastung: " + Math.round(occupancy * 100) + "%, Preis-Modifier: Steh="
+					+ Math.round(standingOccupancyModifier * 100) + "%, Sitz="
+					+ Math.round(seatedOccupancyModifier * 100) + "%, VIP=" + Math.round(vipOccupancyModifier * 100)
+					+ "%");
+			System.out.println("[Attendance] Ticketpreise: Steh=" + ticketPriceStanding + "€, Sitz=" + ticketPriceSeated
+					+ "€, VIP=" + ticketPriceVip + "€");
+
+			// 7. Aktualisiere Fanfreundschaft basierend auf Spielergebnis und Ticketpreisen
 			updateFanSatisfaction(homeTeam, homeGoals, awayGoals, homeStrength, awayStrength);
 
 			teamRepository.save(homeTeam);
@@ -1573,47 +1746,50 @@ public class RepositoryService {
 	/**
 	 * Berechnet einen Auslastungs-Modifier basierend auf Ticketpreis
 	 * 
-	 * @param price Aktueller Ticketpreis
-	 * @param normalMin Untere Grenze des normalen Preisbereichs (z.B. 20€ für Stehplatz)
-	 * @param normalMax Obere Grenze des normalen Preisbereichs (z.B. 40€ für Stehplatz)
-	 * @param highMax Obere Grenze für "hohe" Preise (z.B. 60€)
+	 * @param price      Aktueller Ticketpreis
+	 * @param normalMin  Untere Grenze des normalen Preisbereichs (z.B. 20€ für
+	 *                   Stehplatz)
+	 * @param normalMax  Obere Grenze des normalen Preisbereichs (z.B. 40€ für
+	 *                   Stehplatz)
+	 * @param highMax    Obere Grenze für "hohe" Preise (z.B. 60€)
 	 * @param extremeMax Obere Grenze für "extreme" Preise (z.B. 100€)
 	 * @return Modifier zwischen 0.0 und 1.0 (oder höher für günstige Preise)
 	 */
-	public double calculatePriceOccupancyModifier(int price, int normalMin, int normalMax, int highMax, int extremeMax) {
+	public double calculatePriceOccupancyModifier(int price, int normalMin, int normalMax, int highMax,
+			int extremeMax) {
 		// Sehr günstig (unter normalMin): Leichter Bonus (+5-10%)
 		if (price < normalMin / 2) {
 			return 1.10; // +10% Auslastung
 		} else if (price < normalMin) {
 			return 1.05; // +5% Auslastung
 		}
-		
+
 		// Normaler Bereich (normalMin bis normalMax): Volle Auslastung
 		if (price <= normalMax) {
 			return 1.0; // 100% normale Auslastung
 		}
-		
+
 		// Leicht erhöht (normalMax bis highMax): Leichte Reduktion
 		if (price <= highMax) {
 			// Linear von 1.0 bis 0.6 (40% Reduktion)
 			double factor = (double) (price - normalMax) / (highMax - normalMax);
 			return 1.0 - (factor * 0.4);
 		}
-		
+
 		// Hoch (highMax bis extremeMax): Starke Reduktion
 		if (price <= extremeMax) {
 			// Linear von 0.6 bis 0.2 (80% Reduktion)
 			double factor = (double) (price - highMax) / (extremeMax - highMax);
 			return 0.6 - (factor * 0.4);
 		}
-		
+
 		// Extrem hoch (über extremeMax): Drastische Reduktion
 		if (price <= extremeMax * 2) {
 			// Linear von 0.2 bis 0.05 (95% Reduktion)
 			double factor = (double) (price - extremeMax) / extremeMax;
 			return Math.max(0.05, 0.2 - (factor * 0.15));
 		}
-		
+
 		// Völlig unrealistisch (über extremeMax * 2): Minimale Auslastung
 		return 0.01; // Nur 1% kommen noch
 	}
@@ -1684,10 +1860,10 @@ public class RepositoryService {
 
 		// STEHPLÄTZE: Neutral 20-40€, Positiv <20€, Negativ >40€
 		double standingImpact = calculatePriceFanImpact(ticketPriceStanding, 20, 40, 60, topTeamBonus);
-		
+
 		// SITZPLÄTZE: Neutral 40-60€, Positiv <40€, Negativ >60€
 		double seatedImpact = calculatePriceFanImpact(ticketPriceSeated, 40, 60, 100, topTeamBonus);
-		
+
 		// VIP: Neutral 80-150€, Positiv <80€, Negativ >150€
 		double vipImpact = calculatePriceFanImpact(ticketPriceVip, 80, 150, 300, topTeamBonus);
 
@@ -1704,29 +1880,33 @@ public class RepositoryService {
 		System.out.println("[FanSatisfaction] Team " + homeTeam.getName() + ": " + resultText + topTeamInfo
 				+ " → Fanfreundschaft " + currentSatisfaction + "% → " + homeTeam.getFanSatisfaction() + "% ("
 				+ (satisfactionChange > 0 ? "+" : "") + satisfactionChange + ")");
-		System.out.println("[FanSatisfaction] Preis-Impact: Steh=" + String.format("%.1f", standingImpact) 
-				+ ", Sitz=" + String.format("%.1f", seatedImpact) + ", VIP=" + String.format("%.1f", vipImpact));
+		System.out.println("[FanSatisfaction] Preis-Impact: Steh=" + String.format("%.1f", standingImpact) + ", Sitz="
+				+ String.format("%.1f", seatedImpact) + ", VIP=" + String.format("%.1f", vipImpact));
 	}
 
 	/**
-	 * Berechnet den Fanfreundschafts-Impact eines Ticketpreises (fließender Übergang)
+	 * Berechnet den Fanfreundschafts-Impact eines Ticketpreises (fließender
+	 * Übergang)
 	 * 
-	 * @param price Aktueller Preis
-	 * @param neutralMin Untere Grenze des neutralen Bereichs (z.B. 20€ für Stehplatz)
-	 * @param neutralMax Obere Grenze des neutralen Bereichs (z.B. 40€ für Stehplatz)
-	 * @param maxPrice Maximaler erlaubter Preis (z.B. 60€)
+	 * @param price        Aktueller Preis
+	 * @param neutralMin   Untere Grenze des neutralen Bereichs (z.B. 20€ für
+	 *                     Stehplatz)
+	 * @param neutralMax   Obere Grenze des neutralen Bereichs (z.B. 40€ für
+	 *                     Stehplatz)
+	 * @param maxPrice     Maximaler erlaubter Preis (z.B. 60€)
 	 * @param topTeamBonus Multiplier für Top-Team Spiele (1.2 = +20% Toleranz)
 	 * @return Impact auf Fanfreundschaft (-3.0 bis +3.0)
 	 */
-	private double calculatePriceFanImpact(int price, int neutralMin, int neutralMax, int maxPrice, double topTeamBonus) {
+	private double calculatePriceFanImpact(int price, int neutralMin, int neutralMax, int maxPrice,
+			double topTeamBonus) {
 		// Wende Top-Team Bonus an: Erhöht neutralMax
 		int adjustedNeutralMax = (int) (neutralMax * topTeamBonus);
-		
+
 		// Neutraler Bereich: Keine Änderung
 		if (price >= neutralMin && price <= adjustedNeutralMax) {
 			return 0.0;
 		}
-		
+
 		// Positiver Bereich (unter neutralMin): Je günstiger, desto besser
 		// Fließender Übergang von neutralMin bis 0€
 		if (price < neutralMin) {
@@ -1734,7 +1914,7 @@ public class RepositoryService {
 			double factor = (double) (neutralMin - price) / neutralMin;
 			return Math.min(3.0, factor * 3.0);
 		}
-		
+
 		// Negativer Bereich (über adjustedNeutralMax): Je teurer, desto schlechter
 		// Fließender Übergang von adjustedNeutralMax bis maxPrice
 		if (price > adjustedNeutralMax) {
@@ -1742,7 +1922,7 @@ public class RepositoryService {
 			double factor = (double) (price - adjustedNeutralMax) / (maxPrice - adjustedNeutralMax);
 			return Math.max(-3.0, -factor * 3.0);
 		}
-		
+
 		return 0.0;
 	}
 
@@ -1754,7 +1934,7 @@ public class RepositoryService {
 			// Finde Liga des Heimteams
 			List<League> allLeagues = leagueRepository.findAll();
 			Long homeLeagueId = null;
-			
+
 			for (League league : allLeagues) {
 				for (LeagueSlot slot : league.getSlots()) {
 					if (slot.getTeamId() != null && slot.getTeamId().equals(homeTeamId)) {
@@ -1762,14 +1942,16 @@ public class RepositoryService {
 						break;
 					}
 				}
-				if (homeLeagueId != null) break;
+				if (homeLeagueId != null)
+					break;
 			}
-			
-			if (homeLeagueId == null) return false;
-			
+
+			if (homeLeagueId == null)
+				return false;
+
 			// Hole Tabelle und prüfe ob awayTeam in Top 4 ist
 			List<LeagueStandingsDTO> standings = getLeagueStandingsByLeagueId(homeLeagueId);
-			
+
 			// Prüfe ob das Auswärtsteam in den Top 4 ist (basierend auf Stärke)
 			for (LeagueStandingsDTO standing : standings) {
 				if (standing.getPosition() <= 4) {
@@ -1781,7 +1963,7 @@ public class RepositoryService {
 					}
 				}
 			}
-			
+
 			return false;
 		} catch (Exception e) {
 			return false; // Bei Fehler: Kein Top-Team Bonus
@@ -1978,7 +2160,7 @@ public class RepositoryService {
 	}
 
 	/**
-	 * Gibt den Spielbericht eines Spiels zurück
+	 * Gibt den Spielbericht eines Spiels zurück MIT Spieler-Bewertungen
 	 */
 	public MatchReportDTO getMatchReport(Long matchId) {
 		Match match = matchRepository.findById(matchId).orElse(null);
@@ -2000,11 +2182,14 @@ public class RepositoryService {
 		List<MatchEventDTO> eventDTOs = new ArrayList<>();
 
 		for (MatchEvent event : events) {
-			// Bestimme Team-Name basierend auf teamId
-			String teamName = event.getTeamId().equals(homeTeamId) ? homeTeamName : awayTeamName;
-			MatchEventDTO dto = new MatchEventDTO(event.getId(), event.getMatchId(), event.getTeamId(), teamName,
-					event.getPlayerId(), event.getPlayerName(), event.getType(), event.getMinute());
-			eventDTOs.add(dto);
+			// NUR Tor-Events für die Event-Liste (Spielbericht zeigt nur Tore)
+			if ("goal".equals(event.getType())) {
+				// Bestimme Team-Name basierend auf teamId
+				String teamName = event.getTeamId().equals(homeTeamId) ? homeTeamName : awayTeamName;
+				MatchEventDTO dto = new MatchEventDTO(event.getId(), event.getMatchId(), event.getTeamId(), teamName,
+						event.getPlayerId(), event.getPlayerName(), event.getType(), event.getMinute());
+				eventDTOs.add(dto);
+			}
 		}
 
 		// Sortiere Events nach Minute
@@ -2018,22 +2203,256 @@ public class RepositoryService {
 		// Füge Zuschauerzahl hinzu
 		report.setAttendance(match.getAttendance());
 
+		// Berechne und füge Spieler-Bewertungen hinzu (nur wenn Spiel gespielt wurde)
+		if ("played".equals(match.getStatus())) {
+			int homeGoals = match.getHomeGoals() != null ? match.getHomeGoals() : 0;
+			int awayGoals = match.getAwayGoals() != null ? match.getAwayGoals() : 0;
+
+			// Hole Lineup-Spieler für beide Teams
+			String homeFormation = homeTeam != null && homeTeam.getActiveFormation() != null
+					? homeTeam.getActiveFormation()
+					: "4-4-2";
+			String awayFormation = awayTeam != null && awayTeam.getActiveFormation() != null
+					? awayTeam.getActiveFormation()
+					: "4-4-2";
+
+			List<PlayerRatingDTO> homeRatings = calculateTeamPlayerRatings(homeTeamId, matchId, homeGoals, awayGoals,
+					true, homeFormation, events);
+			List<PlayerRatingDTO> awayRatings = calculateTeamPlayerRatings(awayTeamId, matchId, homeGoals, awayGoals,
+					false, awayFormation, events);
+
+			report.setHomePlayerRatings(homeRatings);
+			report.setAwayPlayerRatings(awayRatings);
+		}
+
 		return report;
 	}
 
 	/**
-	 * Gibt erweiterte Spielerstatistiken für die aktuelle Saison zurück Nur
-	 * Torschützen (Tore > 0)
+	 * Berechnet Spieler-Bewertungen für ein Team
+	 */
+	private List<PlayerRatingDTO> calculateTeamPlayerRatings(Long teamId, Long matchId, int homeGoals, int awayGoals,
+			boolean isHomeTeam, String formation, List<MatchEvent> allEvents) {
+
+		List<PlayerRatingDTO> ratings = new ArrayList<>();
+
+		// Hole alle Spieler aus der Aufstellung
+		List<LineupSlot> lineup = lineupRepository.findByTeamIdAndFormationId(teamId, formation);
+
+		for (LineupSlot slot : lineup) {
+			if (slot.getPlayerId() != null) {
+				Player player = playerRepository.findById(slot.getPlayerId()).orElse(null);
+				if (player != null) {
+					// Berechne Rating für diesen Spieler
+					double rating = playerRatingService.calculatePlayerRating(player.getId(), matchId, teamId,
+							homeGoals, awayGoals, isHomeTeam);
+
+					PlayerRatingDTO ratingDTO = new PlayerRatingDTO(player.getId(), player.getName(),
+							player.getPosition(), rating);
+
+					// Zähle Events für diesen Spieler
+					int goals = 0;
+					int assists = 0;
+					int chancesCreated = 0;
+					int yellowCards = 0;
+					int redCards = 0;
+					int errors = 0;
+
+					for (MatchEvent event : allEvents) {
+						if (event.getPlayerId() != null && event.getPlayerId().equals(player.getId())) {
+							switch (event.getType()) {
+							case "goal":
+								goals++;
+								break;
+							case "assist":
+								assists++;
+								break;
+							case "chance_created":
+								chancesCreated++;
+								break;
+							case "yellow_card":
+								yellowCards++;
+								break;
+							case "red_card":
+								redCards++;
+								break;
+							case "error":
+								errors++;
+								break;
+							}
+						}
+						// NUR für Tor-Events: Prüfe ob Spieler eine Vorlage gegeben hat
+						// Verhindert Doppelzählung mit assist-Events
+						if ("goal".equals(event.getType()) && event.getAssistPlayerId() != null
+								&& event.getAssistPlayerId().equals(player.getId())) {
+							// Prüfe ob es KEIN separates assist-Event für diese Minute gibt
+							boolean hasAssistEvent = allEvents.stream()
+									.anyMatch(e -> "assist".equals(e.getType()) && e.getPlayerId() != null
+											&& e.getPlayerId().equals(player.getId())
+											&& e.getMinute() == event.getMinute());
+							if (!hasAssistEvent) {
+								assists++;
+							}
+						}
+					}
+
+					ratingDTO.setGoals(goals);
+					ratingDTO.setAssists(assists);
+					ratingDTO.setChancesCreated(chancesCreated);
+					ratingDTO.setYellowCards(yellowCards);
+					ratingDTO.setRedCards(redCards);
+					ratingDTO.setErrors(errors);
+
+					ratings.add(ratingDTO);
+				}
+			}
+		}
+
+		// Sortiere nach Rating (beste zuerst)
+		ratings.sort((a, b) -> Double.compare(a.getRating(), b.getRating()));
+
+		return ratings;
+	}
+
+	/**
+	 * Gibt erweiterte Spielerstatistiken für die aktuelle Saison zurück Mit
+	 * Pagination für Torschützen (erste 20)
 	 */
 	public LeagueStatisticsDTO getExtendedLeagueStatistics(Long leagueId) {
-		// Torschützen (nur mit Toren > 0)
-		List<PlayerStatisticsDTO> topScorers = getLeagueStatistics(leagueId);
+		// Torschützen (nur mit Toren > 0) - alle laden für Gesamtzahl
+		List<PlayerStatisticsDTO> allScorers = getLeagueStatistics(leagueId);
+		int totalScorers = allScorers.size();
+
+		// Nur erste 20 für Anzeige
+		List<PlayerStatisticsDTO> topScorers = allScorers.size() > 20 ? allScorers.subList(0, 20) : allScorers;
 
 		// Zu-Null-Spiele (Teams mit 0 Gegentor) - liga-abhängig
 		List<CleanSheetDTO> cleanSheets = getCleanSheets(leagueId);
 
-		// Nur Torschützen, keine Karten mehr
-		return new LeagueStatisticsDTO(topScorers, cleanSheets, new ArrayList<>(), new ArrayList<>());
+		// Vorlagengeber (nur mit Vorlagen > 0)
+		List<PlayerStatisticsDTO> allAssisters = getLeagueAssistStatistics(leagueId);
+		int totalAssisters = allAssisters.size();
+
+		// Nur erste 20 für Anzeige
+		List<PlayerStatisticsDTO> topAssisters = allAssisters.size() > 20 ? allAssisters.subList(0, 20) : allAssisters;
+
+		LeagueStatisticsDTO dto = new LeagueStatisticsDTO(topScorers, cleanSheets, new ArrayList<>(),
+				new ArrayList<>());
+		dto.setTopAssisters(topAssisters);
+		dto.setTotalScorers(totalScorers);
+		dto.setTotalAssisters(totalAssisters);
+
+		return dto;
+	}
+
+	/**
+	 * Gibt Vorlagengeber-Statistik für eine Liga zurück (ALLE)
+	 */
+	public List<PlayerStatisticsDTO> getLeagueAssistStatistics(Long leagueId) {
+		Map<Long, Integer> assistsMap = new HashMap<>();
+		Map<Long, String> playerNamesMap = new HashMap<>();
+		Map<Long, String> teamNamesMap = new HashMap<>();
+
+		// Hole alle Teams dieser Liga
+		League league = leagueRepository.findById(leagueId).orElse(null);
+		if (league == null) {
+			return new ArrayList<>();
+		}
+
+		List<Long> leagueTeamIds = new ArrayList<>();
+		for (LeagueSlot slot : league.getSlots()) {
+			if (slot.getTeamId() != null) {
+				leagueTeamIds.add(slot.getTeamId());
+			}
+		}
+
+		// Durchsuche alle Matches dieser Liga
+		Schedule schedule = null;
+		List<Schedule> schedules = scheduleRepository.findAll();
+		for (Schedule s : schedules) {
+			if (s.getLeagueId().equals(leagueId)) {
+				schedule = s;
+				break;
+			}
+		}
+
+		if (schedule != null) {
+			for (Matchday matchday : schedule.getMatchdays()) {
+				for (Match match : matchday.getMatches()) {
+					if ("played".equals(match.getStatus())) {
+						// Zähle Vorlagen aus MatchEvents
+						List<MatchEvent> events = matchEventRepository.findByMatchId(match.getId());
+						for (MatchEvent event : events) {
+							// Vorlagen aus assist-Events
+							if ("assist".equals(event.getType()) && event.getPlayerId() != null) {
+								Long playerId = event.getPlayerId();
+								assistsMap.put(playerId, assistsMap.getOrDefault(playerId, 0) + 1);
+
+								// Speichere Namen wenn noch nicht vorhanden
+								if (!playerNamesMap.containsKey(playerId)) {
+									Player player = playerRepository.findById(playerId).orElse(null);
+									if (player != null && leagueTeamIds.contains(player.getTeamId())) {
+										playerNamesMap.put(playerId, player.getName());
+										Team team = teamRepository.findById(player.getTeamId()).orElse(null);
+										if (team != null) {
+											teamNamesMap.put(playerId, team.getName());
+										}
+									}
+								}
+							}
+							// Vorlagen aus assistPlayerId in Tor-Events (Fallback)
+							if ("goal".equals(event.getType()) && event.getAssistPlayerId() != null) {
+								Long assistPlayerId = event.getAssistPlayerId();
+								// Prüfe ob es KEIN separates assist-Event gibt
+								boolean hasAssistEvent = events.stream()
+										.anyMatch(e -> "assist".equals(e.getType()) && e.getPlayerId() != null
+												&& e.getPlayerId().equals(assistPlayerId)
+												&& e.getMinute() == event.getMinute());
+
+								if (!hasAssistEvent) {
+									assistsMap.put(assistPlayerId, assistsMap.getOrDefault(assistPlayerId, 0) + 1);
+
+									if (!playerNamesMap.containsKey(assistPlayerId)) {
+										Player player = playerRepository.findById(assistPlayerId).orElse(null);
+										if (player != null && leagueTeamIds.contains(player.getTeamId())) {
+											playerNamesMap.put(assistPlayerId, player.getName());
+											Team team = teamRepository.findById(player.getTeamId()).orElse(null);
+											if (team != null) {
+												teamNamesMap.put(assistPlayerId, team.getName());
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// Konvertiere zu DTOs (nur Spieler mit Vorlagen > 0)
+		List<PlayerStatisticsDTO> result = new ArrayList<>();
+		for (Map.Entry<Long, Integer> entry : assistsMap.entrySet()) {
+			if (entry.getValue() > 0) {
+				Long playerId = entry.getKey();
+				String playerName = playerNamesMap.get(playerId);
+				String teamName = teamNamesMap.get(playerId);
+
+				if (playerName != null) {
+					PlayerStatisticsDTO dto = new PlayerStatisticsDTO();
+					dto.setPlayerId(playerId);
+					dto.setPlayerName(playerName);
+					dto.setTeamName(teamName);
+					dto.setGoals(entry.getValue()); // Nutze goals-Feld für Vorlagen
+					result.add(dto);
+				}
+			}
+		}
+
+		// Sortiere nach Vorlagen (absteigend)
+		result.sort((a, b) -> Integer.compare(b.getGoals(), a.getGoals()));
+
+		return result;
 	}
 
 	/**
@@ -2421,9 +2840,11 @@ public class RepositoryService {
 	}
 
 	/**
-	 * Führt tägliche Aufgaben durch wenn "Nächster Tag" geklickt wird: 1. Verkürzt alle
-	 * Stadionausbauten um 24h oder schließt sie ab wenn < 24h übrig 2. Berechnet 2%
-	 * Zinsen auf aktuellen Kontostand und speichert als Transaktion
+	 * Führt tägliche Aufgaben durch wenn "Nächster Tag" geklickt wird: 1. Verkürzt
+	 * alle Stadionausbauten um 24h oder schließt sie ab wenn < 24h übrig 2.
+	 * Berechnet 0.5% Zinsen auf aktuellen Kontostand und speichert als Transaktion
+	 * 3. CPU-Teams treffen KI-Entscheidungen (alle 5 Spieltage) 4. Auktionssystem:
+	 * Schließt abgelaufene Auktionen ab, erstellt neue, generiert CPU-Gebote
 	 * 
 	 * WICHTIG: Löschen von Transaktionen NICHT hier - die gehören zur Saisonbilanz!
 	 */
@@ -2432,45 +2853,108 @@ public class RepositoryService {
 		try {
 			System.out.println("[RepositoryService] 📅 Verarbeite tägliche Tasks beim Tag-Wechsel...");
 
-		// Verkürze Stadionausbauten um 24h oder schließe sie ab
-		List<StadiumBuild> stadiumBuilds = stadiumBuildRepository.findAll();
+			int currentMatchday = getCurrentMatchday();
 
-		for (StadiumBuild build : stadiumBuilds) {
-			if (build.getCompleted())
-				continue; // Überspringe bereits abgeschlossene
+			// Verkürze Stadionausbauten um 24h oder schließe sie ab
+			List<StadiumBuild> stadiumBuilds = stadiumBuildRepository.findAll();
 
-			LocalDateTime now = LocalDateTime.now();
-			LocalDateTime endTime = build.getEndTime();
-			// Berechne verbleibende Zeit
-			if (endTime.isBefore(now)) {
-				// Bereits abgelaufen - markiere als komplett
-				System.out.println("[RepositoryService] 🏗️ Stadionausbau ID " + build.getId() + " ist fertig");
-				build.setCompleted(true);
-				// Stadium capacity is updated by completeBuild endpoint
-			} else if (endTime.isBefore(now.plusDays(1))) {
-				// Weniger als 1 Tag übrig - schließe jetzt ab
-				System.out.println(
-						"[RepositoryService] ⚡ Stadionausbau ID " + build.getId() + " mit < 24h abgeschlossen");
-				build.setCompleted(true);
-				// Stadium capacity is updated by completeBuild endpoint
-			} else {
-				// Mehr als 1 Tag übrig - verkürze um 24 Stunden
-				LocalDateTime newEndTime = endTime.minusDays(1);
-				System.out.println("[RepositoryService] ⏱️ Stadionausbau ID " + build.getId() + " um 24h verkürzt");
-				build.setEndTime(newEndTime);
+			for (StadiumBuild build : stadiumBuilds) {
+				if (build.getCompleted())
+					continue; // Überspringe bereits abgeschlossene
+
+				LocalDateTime now = LocalDateTime.now();
+				LocalDateTime endTime = build.getEndTime();
+				// Berechne verbleibende Zeit
+				if (endTime.isBefore(now)) {
+					// Bereits abgelaufen - markiere als komplett und aktualisiere Kapazität
+					System.out.println("[RepositoryService] 🏗️ Stadionausbau ID " + build.getId() + " ist fertig");
+					build.setCompleted(true);
+					updateStadiumCapacity(build);
+				} else if (endTime.isBefore(now.plusDays(1))) {
+					// Weniger als 1 Tag übrig - schließe jetzt ab und aktualisiere Kapazität
+					System.out.println(
+							"[RepositoryService] ⚡ Stadionausbau ID " + build.getId() + " mit < 24h abgeschlossen");
+					build.setCompleted(true);
+					updateStadiumCapacity(build);
+				} else {
+					// Mehr als 1 Tag übrig - verkürze um 24 Stunden
+					LocalDateTime newEndTime = endTime.minusDays(1);
+					System.out.println("[RepositoryService] ⏱️ Stadionausbau ID " + build.getId() + " um 24h verkürzt: "
+							+ endTime + " → " + newEndTime);
+					build.setEndTime(newEndTime);
+				}
+
+				stadiumBuildRepository.save(build);
 			}
 
-			stadiumBuildRepository.save(build);
-		}
+			// Berechne und zahle 2% Zinsen auf aktuellen Kontostand für alle Teams
+			processInterestPayments();
 
-		// Berechne und zahle 2% Zinsen auf aktuellen Kontostand für alle Teams
-		processInterestPayments();
+			// CPU-Teams KI-Entscheidungen (alle 5 Spieltage)
+			if (currentMatchday % 5 == 0) {
+				System.out.println("[RepositoryService] 🤖 CPU-AI wird ausgeführt (Spieltag " + currentMatchday + ")");
+				cpuTeamAIService.processPeriodicCpuDecisions();
+			}
 
-		System.out.println("[RepositoryService] ✅ Tägliche Tasks abgeschlossen");
+			// === AUKTIONSSYSTEM ===
+			// Verkürze Auktionszeiten um 24 Stunden
+			System.out.println("[RepositoryService] ⏰ Verkürze Auktionszeiten um 24h...");
+			auctionService.reduceAuctionTimeBy24Hours();
+
+			// Schließe abgelaufene Auktionen ab (transferiert Spieler zum Höchstbietenden)
+			System.out.println("[RepositoryService] 🔨 Schließe abgelaufene Auktionen ab...");
+			GameStateTracking tracking = getOrCreateGameStateTracking();
+			auctionService.closeAndTransferAuctions(currentMatchday, tracking.getCurrentSeason());
+
+			// Erstelle neue tägliche Auktion mit 7 Spielern
+			System.out.println("[RepositoryService] 🆕 Erstelle neue tägliche Auktion...");
+			auctionService.createDailyAuction();
+
+			System.out.println("[RepositoryService] ✅ Tägliche Tasks abgeschlossen");
 
 		} catch (Exception e) {
 			System.err.println("[RepositoryService] ❌ Fehler bei Tägliche Tasks: " + e.getMessage());
 			e.printStackTrace();
+		}
+	}
+
+	/**
+	 * Aktualisiert die Stadionkapazität basierend auf einem abgeschlossenen Build
+	 */
+	private void updateStadiumCapacity(StadiumBuild build) {
+		try {
+			Team team = teamRepository.findById(build.getTeamId()).orElse(null);
+			if (team != null) {
+				String seatType = build.getSeatType();
+				int totalSeats = build.getTotalSeats();
+
+				if ("standing".equals(seatType)) {
+					Long current = team.getStadiumCapacityStanding() != null ? team.getStadiumCapacityStanding()
+							: 1000L;
+					team.setStadiumCapacityStanding(current + totalSeats);
+					System.out.println(
+							"[RepositoryService] 🏟️ Stehplätze erhöht: " + current + " → " + (current + totalSeats));
+				} else if ("seated".equals(seatType)) {
+					Long current = team.getStadiumCapacitySeated() != null ? team.getStadiumCapacitySeated() : 0L;
+					team.setStadiumCapacitySeated(current + totalSeats);
+					System.out.println(
+							"[RepositoryService] 🏟️ Sitzplätze erhöht: " + current + " → " + (current + totalSeats));
+				} else if ("vip".equals(seatType)) {
+					Long current = team.getStadiumCapacityVip() != null ? team.getStadiumCapacityVip() : 0L;
+					team.setStadiumCapacityVip(current + totalSeats);
+					System.out.println(
+							"[RepositoryService] 🏟️ VIP-Plätze erhöht: " + current + " → " + (current + totalSeats));
+				}
+
+				teamRepository.save(team);
+				System.out
+						.println("[RepositoryService] ✅ Stadionkapazität für Team " + team.getName() + " aktualisiert");
+			} else {
+				System.err.println("[RepositoryService] ❌ Team nicht gefunden: " + build.getTeamId());
+			}
+		} catch (Exception e) {
+			System.err
+					.println("[RepositoryService] ❌ Fehler beim Aktualisieren der Stadionkapazität: " + e.getMessage());
 		}
 	}
 
@@ -2487,44 +2971,74 @@ public class RepositoryService {
 			GameStateTracking tracking = getOrCreateGameStateTracking();
 			int currentMatchday = tracking.getCurrentMatchday();
 			int lastInterestMatchday = tracking.getLastInterestMatchday();
-			
+
 			// Wenn Zinsen für diesen Spieltag bereits berechnet wurden, überspringe
 			if (lastInterestMatchday == currentMatchday) {
-				System.out.println("[Interest] ℹ️ Zinsen für Spieltag " + currentMatchday + " bereits berechnet. Überspringe!");
+				System.out.println(
+						"[Interest] ℹ️ Zinsen für Spieltag " + currentMatchday + " bereits berechnet. Überspringe!");
 				return;
 			}
-			
+
 			// Berechne neue Zinsen für alle Teams
 			List<Team> allTeams = teamRepository.findAll();
 			int teamsProcessed = 0;
 
 			for (Team team : allTeams) {
 				long currentBudget = team.getBudgetAsLong();
-				// Berechne 0.5% Zinsen
-				long interestAmount = (long) Math.round(currentBudget * 0.005);
+				long interestAmount = 0;
+				String description = "";
+				String category = "";
 
-				if (interestAmount > 0) {
-					// Addiere Zinsen zum Kontostand
-					team.setBudgetAsLong(currentBudget + interestAmount);
+				if (currentBudget >= 0) {
+					// Positiver Kontostand: 0.5% Zinsen (Guthabenzinsen)
+					interestAmount = (long) Math.round(currentBudget * 0.005);
+					description = "💸 Tägliche Zinsen (0,5%)";
+					category = "interest";
+
+					if (interestAmount > 0) {
+						// Addiere Zinsen zum Kontostand
+						team.setBudgetAsLong(currentBudget + interestAmount);
+						teamRepository.save(team);
+
+						// Speichere als Transaktion (Einnahme)
+						Transaction transaction = new Transaction(team.getId(), interestAmount, "income", description,
+								category);
+						transactionRepository.save(transaction);
+
+						teamsProcessed++;
+						System.out.println("[Interest] Team " + team.getName() + ": " + currentBudget + "€ → +"
+								+ interestAmount + "€ Zinsen (0,5%)");
+					}
+				} else {
+					// Negativer Kontostand: 3% Zinsen (Schuldzinsen)
+					// Bei -1.000.000€ → -30.000€ Zinsen
+					interestAmount = (long) Math.round(Math.abs(currentBudget) * 0.03);
+					description = "💳 Tägliche Schuldzinsen (3%)";
+					category = "interest"; // Gleiche Kategorie wie Guthabenzinsen
+
+					// Ziehe Schuldzinsen ab (macht Schulden größer)
+					team.setBudgetAsLong(currentBudget - interestAmount);
 					teamRepository.save(team);
 
-					// Speichere als Transaktion
-					Transaction transaction = new Transaction(team.getId(), interestAmount, "income",
-							"💸 Tägliche Zinsen (0,5%)", "interest");
+					// Speichere als Transaktion (Ausgabe, negativ)
+					Transaction transaction = new Transaction(team.getId(), -interestAmount, "expense", description,
+							category);
 					transactionRepository.save(transaction);
 
 					teamsProcessed++;
-					System.out.println("[Interest] Team " + team.getName() + ": " + currentBudget + "€ → +"
-							+ interestAmount + "€ Zinsen (0,5%)");
+					System.out.println("[Interest] ⚠️ Team " + team.getName() + ": " + currentBudget + "€ → -"
+							+ interestAmount + "€ Schuldzinsen (3%)");
 				}
 			}
 
-			// Aktualisiere lastInterestMatchday um zu vermeiden, dass Zinsen doppelt berechnet werden
+			// Aktualisiere lastInterestMatchday um zu vermeiden, dass Zinsen doppelt
+			// berechnet werden
 			tracking.setLastInterestMatchday(currentMatchday);
 			gameStateTrackingRepository.save(tracking);
 
 			if (teamsProcessed > 0) {
-				System.out.println("[Interest] 💸 Zinsen für " + teamsProcessed + " Teams beim Spieltag " + currentMatchday + " verarbeitet");
+				System.out.println("[Interest] 💸 Zinsen für " + teamsProcessed + " Teams beim Spieltag "
+						+ currentMatchday + " verarbeitet");
 			}
 		} catch (Exception e) {
 			System.err.println("[Interest] Fehler bei Zinsberechnung: " + e.getMessage());
@@ -2572,17 +3086,18 @@ public class RepositoryService {
 			GameStateTracking tracking = getOrCreateGameStateTracking();
 			int nextMatchday = currentMatchday + 1;
 
-		// Wenn Spieltag 25 erreicht: Saison Reset mit Auf- und Abstieg
-		if (currentMatchday == 25) {
-			resetSeasonWithPromotion();
-			nextMatchday = 1; // Zurück auf Spieltag 1
-			// Setze lastInterestMatchday zurück damit Zinsen in neuer Saison berechnet werden
-			tracking.setLastInterestMatchday(0);
-		}
+			// Wenn Spieltag 25 erreicht: Saison Reset mit Auf- und Abstieg
+			if (currentMatchday == 25) {
+				resetSeasonWithPromotion();
+				nextMatchday = 1; // Zurück auf Spieltag 1
+				// Setze lastInterestMatchday zurück damit Zinsen in neuer Saison berechnet
+				// werden
+				tracking.setLastInterestMatchday(0);
+			}
 
-		tracking.setCurrentMatchday(nextMatchday);
-		tracking.setLastSimulationTime(System.currentTimeMillis());
-		gameStateTrackingRepository.save(tracking);
+			tracking.setCurrentMatchday(nextMatchday);
+			tracking.setLastSimulationTime(System.currentTimeMillis());
+			gameStateTrackingRepository.save(tracking);
 
 			result.put("newMatchday", tracking.getCurrentMatchday());
 			result.put("isOffSeason", true);
@@ -2656,6 +3171,26 @@ public class RepositoryService {
 			}
 		}
 
+		// Zahle Ligaplatzierungsprämien und Sponsor-Boni am 22. Spieltag aus
+		if (currentMatchday == 22) {
+			System.out.println("[RepositoryService] 💰 Zahle Ligaplatzierungsprämien und Sponsor-Boni aus...");
+			processLeaguePositionBonuses();
+			processSponsorBonuses();
+		}
+
+		// CPU-Teams verhandeln Verträge (jede Runde)
+		System.out.println("[RepositoryService] 🤖 CPU-Teams verhandeln Verträge...");
+		cpuTeamAIService.processCpuContractNegotiations(1); // TODO: Saison dynamisch
+
+		// CPU-Teams machen Angebote für freie Spieler (jede Runde)
+		System.out.println("[RepositoryService] 💼 CPU-Teams machen Angebote für freie Spieler...");
+		cpuTeamAIService.processCpuFreeAgentOffers();
+
+		// Verarbeite Freie Spieler Entscheidungen beim Spieltagwechsel
+		// Freie Spieler entscheiden sich nach 2 Spieltagen (48h = 2 Matchdays)
+		System.out.println("[RepositoryService] ⭐ Verarbeite Freie Spieler Entscheidungen...");
+		processFreeAgentDecisions();
+
 		// Erhöhe Spieltag
 		GameStateTracking tracking = getOrCreateGameStateTracking();
 		int nextMatchday = Math.min(25, currentMatchday + 1);
@@ -2672,22 +3207,37 @@ public class RepositoryService {
 	}
 
 	/**
-	 * Simuliert die ganze Saison schnell bis zum Ende (Tag 25)
+	 * Simuliert die ganze Saison schnell bis zum Ende (Tag 25) NUR für Deutschland
+	 * 1. Liga und Deutschland Pokal (für schnelleres Testen)
 	 */
 	@Transactional
 	public Map<String, Object> simulateEntireSeasonFast() {
 		int currentMatchday = getCurrentMatchday();
 		int totalMatches = 0;
+		int totalCupMatches = 0;
 
 		System.out.println(
-				"[RepositoryService] ⚡ Starte schnelle Saison-Simulation vom Tag " + currentMatchday + " bis 25...");
+				"[RepositoryService] ⚡ Starte schnelle Saison-Simulation (nur Deutschland 1. Liga + Pokal) vom Tag "
+						+ currentMatchday + " bis 25...");
+
+		// Finde Deutschland 1. Liga
+		League germany1stLeague = leagueRepository.findAll().stream()
+				.filter(l -> "Deutschland".equals(l.getCountry()) && l.getDivision() == 1).findFirst().orElse(null);
+
+		if (germany1stLeague == null) {
+			System.out.println("[RepositoryService] ⚠️ Deutschland 1. Liga nicht gefunden!");
+			return new HashMap<>();
+		}
 
 		// Simuliere alle Spieltage von jetzt bis 25
 		while (currentMatchday <= 25) {
-			// Simuliere aktuellen Tag
+			System.out.println("[RepositoryService] ⚡ Simuliere Spieltag " + currentMatchday);
+
+			// Simuliere nur Deutschland 1. Liga Spiele
 			List<Matchday> allMatchdays = matchdayRepository.findAll();
 			for (Matchday md : allMatchdays) {
-				if (md.getDayNumber() == currentMatchday && !md.isOffSeason()) {
+				if (md.getDayNumber() == currentMatchday && !md.isOffSeason()
+						&& germany1stLeague.getId().equals(md.getLeagueId())) {
 					for (Match match : md.getMatches()) {
 						if (!"played".equals(match.getStatus())) {
 							try {
@@ -2699,6 +3249,52 @@ public class RepositoryService {
 						}
 					}
 				}
+			}
+
+			// Simuliere Cup-Spiele für Deutschland wenn es ein Cup-Spieltag ist (alle 3
+			// Spieltage: 3, 6, 9, 12, 15, 18, 21)
+			if (currentMatchday % 3 == 0 && currentMatchday <= 21) {
+				System.out.println("[RepositoryService] 🏆 Cup Spieltag " + currentMatchday
+						+ " - Simuliere Deutschland Cup-Spiele");
+				int cupRound = currentMatchday / 3; // Runde 1-7
+				try {
+					// Finde Deutschland Cup-Turnier
+					Optional<CupTournament> germanCupOpt = cupTournamentRepository.findByCountry("Deutschland").stream()
+							.filter(t -> "active".equals(t.getStatus())).findFirst();
+
+					if (germanCupOpt.isPresent()) {
+						CupTournament tournament = germanCupOpt.get();
+						System.out.println("[RepositoryService] 🏆 Deutschland Cup gefunden (Runde: "
+								+ tournament.getCurrentRound() + ", Status: " + tournament.getStatus() + ")");
+
+						// Wenn Cup-Runde noch nicht generiert wurde, generiere sie jetzt
+						if (tournament.getCurrentRound() < cupRound) {
+							System.out.println("[RepositoryService] 🏆 Generiere Deutschland Cup Runde " + cupRound);
+							cupService.generateCupRound(tournament, cupRound);
+						}
+
+						// Simuliere die Runde wenn sie matchday-ready ist
+						if (tournament.getCurrentRound() == cupRound) {
+							System.out.println("[RepositoryService] 🏆 Simuliere Deutschland Cup Runde " + cupRound);
+							List<com.example.manager.model.CupMatch> roundMatches = cupService
+									.getRoundMatches(tournament.getId(), cupRound);
+							cupService.completeCupRound(tournament, cupRound);
+							totalCupMatches += roundMatches.size();
+						}
+					} else {
+						System.out.println("[RepositoryService] ⚠️ Kein aktives Deutschland Cup-Turnier gefunden!");
+					}
+				} catch (Exception e) {
+					System.err.println("[RepositoryService] Fehler bei Cup-Simulation: " + e.getMessage());
+					e.printStackTrace();
+				}
+			}
+
+			// Zahle Ligaplatzierungsprämien und Sponsor-Boni am 22. Spieltag aus
+			if (currentMatchday == 22) {
+				System.out.println("[RepositoryService] 💰 Zahle Ligaplatzierungsprämien und Sponsor-Boni aus...");
+				processLeaguePositionBonuses();
+				processSponsorBonuses();
 			}
 
 			// Erhöhe auf nächsten Tag
@@ -2722,9 +3318,12 @@ public class RepositoryService {
 		Map<String, Object> result = new HashMap<>();
 		result.put("newMatchday", Math.min(25, currentMatchday));
 		result.put("simulatedMatches", totalMatches);
-		result.put("message", "⚡ Saison-Simulation abgeschlossen! " + totalMatches + " Spiele simuliert.");
+		result.put("simulatedCupMatches", totalCupMatches);
+		result.put("message", "⚡ Saison-Simulation abgeschlossen! " + totalMatches
+				+ " Liga-Spiele (Deutschland 1. Liga) und " + totalCupMatches + " Pokal-Spiele simuliert.");
 
-		System.out.println("[RepositoryService] ✅ Saison-Simulation mit " + totalMatches + " Spielen abgeschlossen");
+		System.out.println("[RepositoryService] ✅ Saison-Simulation mit " + totalMatches + " Liga-Spielen und "
+				+ totalCupMatches + " Pokal-Spielen abgeschlossen");
 
 		return result;
 	}
@@ -2748,12 +3347,34 @@ public class RepositoryService {
 	}
 
 	/**
-	 * Verarbeitet Saison-Ende Boni und entfernt Sponsoren - Klassenerhalt-Bonus für
-	 * Platz 1-8 - Titel-Bonus für Platz 1-2 - Entfernt alle Sponsoren
+	 * Verarbeitet Saison-Ende und entfernt Sponsoren HINWEIS: Alle Prämien (Liga +
+	 * Sponsor) werden bereits am Spieltag 22 ausgezahlt!
 	 */
 	@Transactional
 	private void processSeasonEndBonuses() {
-		System.out.println("[RepositoryService] 💰 Verarbeite Saison-Ende Boni...");
+		System.out.println("[RepositoryService] 🔄 Entferne alle Sponsoren am Saison-Ende...");
+
+		List<Team> allTeams = teamRepository.findAll();
+
+		for (Team team : allTeams) {
+			// Entferne Sponsor
+			Sponsor sponsor = sponsorRepository.findByTeamId(team.getId()).orElse(null);
+			if (sponsor != null) {
+				sponsorRepository.delete(sponsor);
+				System.out.println(
+						"[Sponsor] Sponsor " + sponsor.getName() + " von Team " + team.getName() + " entfernt");
+			}
+		}
+
+		System.out.println("[RepositoryService] ✅ Alle Sponsoren entfernt");
+	}
+
+	/**
+	 * Zahlt Sponsor-Boni (Klassenerhalt & Titel) am Spieltag 22 aus
+	 */
+	@Transactional
+	private void processSponsorBonuses() {
+		System.out.println("[RepositoryService] 💰 Verarbeite Sponsor-Boni...");
 
 		List<League> allLeagues = leagueRepository.findAll();
 
@@ -2771,33 +3392,254 @@ public class RepositoryService {
 
 				// Prüfe ob Team einen Sponsor hat
 				Sponsor sponsor = sponsorRepository.findByTeamId(teamId).orElse(null);
+				if (sponsor == null) {
+					continue;
+				}
 
-				// Klassenerhalt-Bonus (Platz 1-8)
-				if (position >= 1 && position <= 8 && sponsor != null && sponsor.getSurvivePayout() > 0) {
+				// Klassenerhalt-Bonus (Platz 1-8) - Sponsor
+				if (position >= 1 && position <= 8 && sponsor.getSurvivePayout() > 0) {
 					team.setBudget(team.getBudgetAsLong() + sponsor.getSurvivePayout());
+
+					Transaction transaction = new Transaction(teamId, (long) sponsor.getSurvivePayout(), "income",
+							"Sponsor " + sponsor.getName() + " - Klassenerhalt", "sponsors");
+					transactionRepository.save(transaction);
+
 					System.out.println("[Sponsor] Team " + team.getName() + " (Platz " + position + ") erhält "
 							+ sponsor.getSurvivePayout() + "€ Klassenerhalt von " + sponsor.getName());
 				}
 
-				// Titel-Bonus (Platz 1-2)
-				if (position >= 1 && position <= 2 && sponsor != null && sponsor.getTitlePayout() > 0) {
+				// Titel-Bonus (Platz 1-2) - Sponsor
+				if (position >= 1 && position <= 2 && sponsor.getTitlePayout() > 0) {
 					team.setBudget(team.getBudgetAsLong() + sponsor.getTitlePayout());
+
+					Transaction transaction = new Transaction(teamId, (long) sponsor.getTitlePayout(), "income",
+							"Sponsor " + sponsor.getName() + " - Titelprämie", "sponsors");
+					transactionRepository.save(transaction);
+
 					System.out.println("[Sponsor] Team " + team.getName() + " (Platz " + position + ") erhält "
 							+ sponsor.getTitlePayout() + "€ Titelprämie von " + sponsor.getName());
 				}
 
 				teamRepository.save(team);
+			}
+		}
 
-				// Entferne Sponsor
-				if (sponsor != null) {
-					sponsorRepository.delete(sponsor);
-					System.out.println(
-							"[Sponsor] Sponsor " + sponsor.getName() + " von Team " + team.getName() + " entfernt");
+		System.out.println("[RepositoryService] ✅ Sponsor-Boni verarbeitet");
+	}
+
+	/**
+	 * Zahlt Ligaplatzierungsprämien am Spieltag 22 aus
+	 */
+	@Transactional
+	private void processLeaguePositionBonuses() {
+		System.out.println("[RepositoryService] 💰 Verarbeite Ligaplatzierungsprämien...");
+
+		List<League> allLeagues = leagueRepository.findAll();
+
+		for (League league : allLeagues) {
+			List<LeagueStandingsDTO> standings = getLeagueStandingsByLeagueId(league.getId());
+			int division = league.getDivision();
+
+			for (LeagueStandingsDTO standing : standings) {
+				Long teamId = standing.getTeamId();
+				int position = standing.getPosition();
+
+				Team team = teamRepository.findById(teamId).orElse(null);
+				if (team == null) {
+					continue;
+				}
+
+				// Ligaplatzierungsprämien
+				long leagueBonus = getLeaguePositionBonus(division, position);
+				if (leagueBonus > 0) {
+					team.setBudget(team.getBudgetAsLong() + leagueBonus);
+					teamRepository.save(team);
+
+					Transaction transaction = new Transaction(teamId, leagueBonus, "income",
+							"Ligaplatzierung " + division + ". Liga - Platz " + position, "competition");
+					transactionRepository.save(transaction);
+
+					System.out.println("[Competition] Team " + team.getName() + " (Liga " + division + ", Platz "
+							+ position + ") erhält " + leagueBonus + "€ Ligaplatzierungsprämie");
 				}
 			}
 		}
 
-		System.out.println("[RepositoryService] ✅ Saison-Ende Boni verarbeitet und Sponsoren entfernt");
+		System.out.println("[RepositoryService] ✅ Ligaplatzierungsprämien verarbeitet");
+	}
+
+	/**
+	 * Ermittelt die Ligaplatzierungsprämie basierend auf Division und Position
+	 */
+	private long getLeaguePositionBonus(int division, int position) {
+		// 1. Liga Prämien
+		if (division == 1) {
+			switch (position) {
+			case 1:
+				return 15_000_000;
+			case 2:
+				return 12_000_000;
+			case 3:
+				return 10_000_000;
+			case 4:
+				return 9_000_000;
+			case 5:
+				return 8_000_000;
+			case 6:
+				return 7_000_000;
+			case 7:
+				return 6_500_000;
+			case 8:
+				return 6_000_000;
+			case 9:
+				return 5_500_000;
+			case 10:
+				return 5_000_000;
+			case 11:
+				return 4_500_000;
+			case 12:
+				return 4_000_000;
+			default:
+				return 0;
+			}
+		}
+
+		// 2. Liga Prämien
+		if (division == 2) {
+			switch (position) {
+			case 1:
+				return 7_000_000;
+			case 2:
+				return 6_000_000;
+			case 3:
+				return 5_000_000;
+			case 4:
+				return 4_000_000;
+			case 5:
+				return 3_500_000;
+			case 6:
+				return 3_000_000;
+			case 7:
+				return 2_700_000;
+			case 8:
+				return 2_400_000;
+			case 9:
+				return 2_100_000;
+			case 10:
+				return 1_800_000;
+			case 11:
+				return 1_500_000;
+			case 12:
+				return 1_200_000;
+			default:
+				return 0;
+			}
+		}
+
+		// 3. Liga Prämien
+		if (division == 3) {
+			switch (position) {
+			case 1:
+				return 4_000_000;
+			case 2:
+				return 3_500_000;
+			case 3:
+				return 3_000_000;
+			case 4:
+				return 2_600_000;
+			case 5:
+				return 2_200_000;
+			case 6:
+				return 1_800_000;
+			case 7:
+				return 1_500_000;
+			case 8:
+				return 1_200_000;
+			case 9:
+				return 1_000_000;
+			case 10:
+				return 800_000;
+			case 11:
+				return 600_000;
+			case 12:
+				return 400_000;
+			default:
+				return 0;
+			}
+		}
+
+		return 0;
+	}
+
+	/**
+	 * Speichert die Ligaplatzierungen der aktuellen Saison in der Historie
+	 */
+	@Transactional
+	private void saveSeasonHistory(int season) {
+		List<League> allLeagues = leagueRepository.findAll();
+
+		for (League league : allLeagues) {
+			List<LeagueStandingsDTO> standings = getLeagueStandingsByLeagueId(league.getId());
+
+			for (LeagueStandingsDTO standing : standings) {
+				SeasonHistory history = new SeasonHistory();
+				history.setSeason(season);
+				history.setLeagueId(league.getId());
+				history.setLeagueName(league.getName());
+				history.setCountry(league.getCountry());
+				history.setDivision(league.getDivision());
+				history.setTeamId(standing.getTeamId());
+				history.setTeamName(standing.getTeamName());
+				history.setPosition(standing.getPosition());
+				history.setPoints(standing.getPoints());
+				history.setGoalsFor(standing.getGoalsFor());
+				history.setGoalsAgainst(standing.getGoalsAgainst());
+				history.setWins(standing.getWon());
+				history.setDraws(standing.getDrawn());
+				history.setLosses(standing.getLost());
+
+				seasonHistoryRepository.save(history);
+			}
+		}
+
+		System.out.println("[RepositoryService] ✅ Saison " + season + " Historie gespeichert");
+	}
+
+	/**
+	 * Speichert alle Pokalspiele der aktuellen Saison in der Historie
+	 */
+	@Transactional
+	private void saveCupHistory(int season) {
+		List<CupTournament> allCups = cupTournamentRepository.findAll();
+
+		for (CupTournament cup : allCups) {
+			if (cup.getSeason() == season) {
+				// Hole alle Spiele dieses Pokals
+				List<com.example.manager.model.CupMatch> matches = cupMatchRepository.findByTournamentId(cup.getId());
+
+				for (com.example.manager.model.CupMatch match : matches) {
+					if ("completed".equals(match.getStatus())) {
+						CupHistory history = new CupHistory();
+						history.setSeason(season);
+						history.setCountry(cup.getCountry());
+						history.setRound(match.getRound());
+						history.setHomeTeamId(match.getHomeTeamId());
+						history.setHomeTeamName(match.getHomeTeamName());
+						history.setAwayTeamId(match.getAwayTeamId());
+						history.setAwayTeamName(match.getAwayTeamName());
+						history.setHomeGoals(match.getHomeGoals());
+						history.setAwayGoals(match.getAwayGoals());
+						history.setWinnerId(match.getWinnerId());
+						history.setWinnerName(match.getWinnerName());
+						history.setResultNote(match.getResultNote());
+
+						cupHistoryRepository.save(history);
+					}
+				}
+			}
+		}
+
+		System.out.println("[RepositoryService] ✅ Pokal Historie für Saison " + season + " gespeichert");
 	}
 
 	/**
@@ -2809,37 +3651,83 @@ public class RepositoryService {
 	private void resetSeasonWithPromotion() {
 		System.out.println("[RepositoryService] 🏆 Starte Saison-Reset mit Auf- und Abstieg...");
 
-		// === SCHRITT 1: Altern aller Spieler und Karriereeenden ===
-		// Rufe endSeason() für alle Teams auf
-		endSeason();
-		System.out.println("[RepositoryService] ✅ Alle Teams haben Saison-Ende verarbeitet");
+		// Hole aktuelle Saison
+		GameStateTracking tracking = getOrCreateGameStateTracking();
+		int currentSeason = tracking.getCurrentSeason();
 
-		// === SPONSOR & BONUSZAHLUNGEN ===
-		// 1. Entferne alle Sponsoren
-		// 2. Zahle Saison-Ende Boni (Klassenerhalt und Titel)
-		processSeasonEndBonuses();
+	// === SCHRITT 1: SPEICHERE SAISON-HISTORIE ===
+	System.out.println("[RepositoryService] 📚 Speichere Saison " + currentSeason + " Historie...");
+	saveSeasonHistory(currentSeason);
+	saveCupHistory(currentSeason);
 
-		List<League> allLeagues = leagueRepository.findAll();
+	// === AUTO-VERLÄNGERUNG: Verlängere Verträge mit 1 Saison Restlaufzeit ===
+	// WICHTIG: Muss VOR endSeason() stattfinden, sonst werden Verträge reduziert und die Verlängerung kommt zu spät!
+	// CPU-Teams verlängern automatisch Spielerverträge mit nur noch 1 Saison
+	System.out.println("[RepositoryService] 🔄 Auto-Verlängere Spielerverträge bei CPU-Teams...");
+	cpuTeamAIService.autoRenewExpiringContracts();
+	System.out.println("[RepositoryService] ✅ Verträge auto-verlängert!");
 
-		// Gruppiere Ligen nach Land
-		Map<String, List<League>> leaguesByCountry = new HashMap<>();
-		for (League league : allLeagues) {
-			String country = league.getCountry() != null ? league.getCountry() : "Unknown";
-			leaguesByCountry.putIfAbsent(country, new ArrayList<>());
-			leaguesByCountry.get(country).add(league);
-		}
+	// === SCHRITT 2: Altern aller Spieler und Karriereeenden ===
+	// Rufe endSeason() für alle Teams auf
+	endSeason();
+	System.out.println("[RepositoryService] ✅ Alle Teams haben Saison-Ende verarbeitet");
 
-		// Führe Auf-/Abstieg für jedes Land separat durch
-		for (Map.Entry<String, List<League>> entry : leaguesByCountry.entrySet()) {
-			String country = entry.getKey();
-			List<League> countryLeagues = entry.getValue();
-			System.out.println("[RepositoryService] Führe Auf-/Abstieg für " + country + " durch ("
-					+ countryLeagues.size() + " Ligen)...");
-			resetSeasonForCountry(country, countryLeagues);
-		}
+	// === SPONSOR ENTFERNEN ===
+	// Entferne alle Sponsoren (Boni wurden bereits am Spieltag 22 ausgezahlt)
+	processSeasonEndBonuses();
 
-		System.out.println("[RepositoryService] ✅ Saison-Reset abgeschlossen für alle Länder!");
+	// === FINANZÜBERSICHT ZURÜCKSETZEN ===
+	// Lösche alle Transaktionen für alle Teams
+	System.out.println("[RepositoryService] 💰 Setze Finanzübersicht zurück...");
+	List<Team> allTeams = teamRepository.findAll();
+	for (Team team : allTeams) {
+		transactionRepository.deleteByTeamId(team.getId());
 	}
+	System.out.println("[RepositoryService] ✅ Finanzübersicht für " + allTeams.size() + " Teams zurückgesetzt");
+
+	List<League> allLeagues = leagueRepository.findAll();
+
+	// Gruppiere Ligen nach Land
+	Map<String, List<League>> leaguesByCountry = new HashMap<>();
+	for (League league : allLeagues) {
+		String country = league.getCountry() != null ? league.getCountry() : "Unknown";
+		leaguesByCountry.putIfAbsent(country, new ArrayList<>());
+		leaguesByCountry.get(country).add(league);
+	}
+
+	// Führe Auf-/Abstieg für jedes Land separat durch
+	for (Map.Entry<String, List<League>> entry : leaguesByCountry.entrySet()) {
+		String country = entry.getKey();
+		List<League> countryLeagues = entry.getValue();
+		System.out.println("[RepositoryService] Führe Auf-/Abstieg für " + country + " durch ("
+				+ countryLeagues.size() + " Ligen)...");
+		resetSeasonForCountry(country, countryLeagues);
+	}
+
+// === ERHÖHE SAISON ===
+tracking.setCurrentSeason(currentSeason + 1);
+gameStateTrackingRepository.save(tracking);
+System.out.println("[RepositoryService] 🎉 Neue Saison " + (currentSeason + 1) + " beginnt!");
+
+// === INITIALISIERE POKAL FÜR NEUE SAISON ===
+// 64 Teams pro Land: Alle aus Liga 1+2 + Teams aus Liga 3 (Plätze 1-7)
+// Teams auf Plätzen 8-12 aus den vier 3. Ligen werden ausgeschlossen (5×4 = 20
+// Teams)
+System.out.println("[RepositoryService] 🏆 Initialisiere Pokal für neue Saison " + (currentSeason + 1) + "...");
+cupService.initializeAllCupTournaments(currentSeason + 1);
+System.out.println("[RepositoryService] ✅ Pokal für neue Saison initialisiert!");
+
+// === CPU-TEAMS KI-ENTSCHEIDUNGEN ===
+// Lasse CPU-Teams Sponsoren wählen, Stadion ausbauen, Jugend rekrutieren
+cpuTeamAIService.processCpuTeamDecisions();
+
+// === CPU-TEAMS AUFSTELLUNGEN OPTIMIEREN ===
+// Nach Saison-Reset haben viele Teams neue Spieler oder verlorene Spieler
+System.out.println("[RepositoryService] 📋 Optimiere Aufstellungen aller CPU-Teams...");
+cpuLineupOptimizerService.optimizeAllCpuTeamLineups();
+
+System.out.println("[RepositoryService] ✅ Saison-Reset abgeschlossen für alle Länder!");
+}
 
 	/**
 	 * Führt Auf-/Abstieg für ein spezifisches Land durch
@@ -3277,6 +4165,71 @@ public class RepositoryService {
 			playerRepository.saveAll(players);
 			System.out.println("[EndSeason] " + players.size() + " Spieler um 1 Jahr gealtert");
 
+			// SCHRITT 1.5: Reduziere Vertragslaufzeit aller Spieler um 1
+			List<Player> playersToMakeFree = new ArrayList<>();
+			int currentMatchday = getCurrentMatchday();
+
+			for (Player player : players) {
+				if (player.getTeamId() != null) { // Nur Spieler mit Team
+					int newContractLength = player.getContractLength() - 1;
+					player.setContractLength(newContractLength);
+
+					// Wenn Vertrag ausläuft (0), wird Spieler frei
+					if (newContractLength <= 0) {
+						playersToMakeFree.add(player);
+						System.out.println("[EndSeason] ⚠️ Vertrag von " + player.getName() + " ist ausgelaufen!");
+					}
+				}
+			}
+			playerRepository.saveAll(players);
+			System.out.println("[EndSeason] Verträge von " + players.size() + " Spielern um 1 Jahr reduziert");
+
+			// Mache Spieler mit ausgelaufenen Verträgen zu freien Agenten
+			List<LineupSlot> slotsToUpdate = new ArrayList<>();
+			List<FreeAgent> freeAgentsToCreate = new ArrayList<>();
+
+			for (Player player : playersToMakeFree) {
+				Long oldTeamId = player.getTeamId(); // Merke Team-ID bevor wir sie entfernen
+
+				player.setTeamId(null);
+				player.setFreeAgent(true);
+				player.setOnTransferList(false);
+				player.setContractLength(0);
+
+				// Entferne Spieler aus allen Aufstellungen seines alten Teams
+				if (oldTeamId != null) {
+					List<LineupSlot> lineupSlots = lineupRepository.findByTeamId(oldTeamId);
+					for (LineupSlot slot : lineupSlots) {
+						if (slot.getPlayerId() != null && slot.getPlayerId().equals(player.getId())) {
+							slot.setPlayerId(null); // Entferne Spieler aus Slot
+							slotsToUpdate.add(slot);
+							System.out.println("[EndSeason] Entfernt " + player.getName() + " aus Aufstellung von Team "
+									+ oldTeamId);
+						}
+					}
+				}
+
+				// Erstelle FreeAgent Eintrag
+				FreeAgent freeAgent = new FreeAgent(player.getId(), currentMatchday);
+				freeAgentsToCreate.add(freeAgent);
+
+				System.out.println("[EndSeason] 🆓 " + player.getName() + " ist jetzt freier Agent!");
+			}
+
+			// Batch-Speicherung für bessere Performance und Zuverlässigkeit
+			if (!playersToMakeFree.isEmpty()) {
+				playerRepository.saveAll(playersToMakeFree);
+				System.out.println("[EndSeason] " + playersToMakeFree.size() + " Spieler wurden zu freien Agenten");
+			}
+			if (!slotsToUpdate.isEmpty()) {
+				lineupRepository.saveAll(slotsToUpdate);
+				System.out.println("[EndSeason] " + slotsToUpdate.size() + " Aufstellungsslots geleert");
+			}
+			if (!freeAgentsToCreate.isEmpty()) {
+				freeAgentRepository.saveAll(freeAgentsToCreate);
+				System.out.println("[EndSeason] " + freeAgentsToCreate.size() + " FreeAgent-Einträge erstellt");
+			}
+
 			// SCHRITT 2: Prüfe Spieler >= 35 Jahren auf Karriereende
 			List<Player> playersToRemove = new ArrayList<>();
 			for (Player player : players) {
@@ -3311,8 +4264,27 @@ public class RepositoryService {
 				}
 			}
 
-			// Entferne Spieler mit Karriereende
+			// Entferne Spieler mit Karriereende aus Aufstellungen
 			if (!playersToRemove.isEmpty()) {
+				List<LineupSlot> retirementSlotsToUpdate = new ArrayList<>();
+				for (Player player : playersToRemove) {
+					if (player.getTeamId() != null) {
+						List<LineupSlot> lineupSlots = lineupRepository.findByTeamId(player.getTeamId());
+						for (LineupSlot slot : lineupSlots) {
+							if (slot.getPlayerId() != null && slot.getPlayerId().equals(player.getId())) {
+								slot.setPlayerId(null); // Entferne Spieler aus Slot
+								retirementSlotsToUpdate.add(slot);
+								System.out.println(
+										"[EndSeason] Entfernt " + player.getName() + " aus Aufstellung (Karriereende)");
+							}
+						}
+					}
+				}
+				if (!retirementSlotsToUpdate.isEmpty()) {
+					lineupRepository.saveAll(retirementSlotsToUpdate);
+					System.out.println("[EndSeason] " + retirementSlotsToUpdate.size()
+							+ " Aufstellungsslots bei Karriereende geleert");
+				}
 				playerRepository.deleteAll(playersToRemove);
 				System.out.println("[EndSeason] " + playersToRemove.size() + " Spieler beendeten Karriere");
 			}
@@ -3388,6 +4360,131 @@ public class RepositoryService {
 
 		} catch (Exception e) {
 			System.err.println("[EndSeason] Fehler beim Verarbeiten des Saison-Endes: " + e.getMessage());
+			e.printStackTrace();
+		}
+	}
+
+	/**
+	 * Verarbeitet Entscheidungen von freien Spielern Wird beim Spieltagwechsel
+	 * aufgerufen (2 Spieltage = 48h) Freie Spieler wählen das beste Angebot (Mix
+	 * aus Gehalt und Liga-Level)
+	 */
+	@Transactional
+	public void processFreeAgentDecisions() {
+		try {
+			int currentMatchday = getCurrentMatchday();
+
+			// Hole alle verfügbaren freien Spieler
+			List<FreeAgent> freeAgents = freeAgentRepository.findByStatus("available");
+
+			if (freeAgents.isEmpty()) {
+				System.out.println("[FreeAgents] Keine freien Spieler zu verarbeiten");
+				return;
+			}
+
+			System.out.println("[FreeAgents] Verarbeite " + freeAgents.size() + " freie Spieler...");
+
+			for (FreeAgent freeAgent : freeAgents) {
+				Player player = playerRepository.findById(freeAgent.getPlayerId()).orElse(null);
+				if (player == null) {
+					System.out.println(
+							"[FreeAgents] Spieler " + freeAgent.getPlayerId() + " nicht gefunden, lösche FreeAgent");
+					freeAgentRepository.delete(freeAgent);
+					continue;
+				}
+
+				// Prüfe ob Spieler seit mindestens 2 Spieltagen frei ist
+				int matchdaysSinceFree = freeAgent.getMatchdayCreated() != null
+						? currentMatchday - freeAgent.getMatchdayCreated()
+						: 0;
+
+				if (matchdaysSinceFree < 2) {
+					System.out.println("[FreeAgents] ℹ️ " + player.getName() + " ist erst seit " + matchdaysSinceFree
+							+ " Spieltagen frei, wartet noch...");
+					continue;
+				}
+
+				if (freeAgent.getBestOfferTeamId() != null && freeAgent.getBestOfferSalary() != null) {
+					// Spieler hat Angebot und entscheidet sich dafür
+					Team bestTeam = teamRepository.findById(freeAgent.getBestOfferTeamId()).orElse(null);
+
+					if (bestTeam != null) {
+						// Prüfe ob Team genug Geld hat (optional)
+						long teamBudget = bestTeam.getBudgetAsLong();
+						long yearlySalary = freeAgent.getBestOfferSalary();
+
+						if (teamBudget < yearlySalary * 2) {
+							System.out.println("[FreeAgents] ⚠️ " + bestTeam.getName() + " hat nicht genug Budget für "
+									+ player.getName());
+							// Spieler bleibt frei, lösche nur das Angebot
+							freeAgent.setBestOfferTeamId(null);
+							freeAgent.setBestOfferSalary(null);
+							freeAgent.setBestOfferContractLength(null);
+							freeAgent.setMatchdayCreated(currentMatchday); // Reset timer
+							freeAgentRepository.save(freeAgent);
+							continue;
+						}
+
+						// Übertrage Spieler zum Team
+						player.setTeamId(freeAgent.getBestOfferTeamId());
+						player.setSalary(freeAgent.getBestOfferSalary());
+						player.setContractLength(
+								freeAgent.getBestOfferContractLength() != null ? freeAgent.getBestOfferContractLength()
+										: 2);
+						player.setFreeAgent(false);
+						player.calculateMarketValue();
+						playerRepository.save(player);
+
+						// Ziehe Gehalt vom Team-Budget ab (erste Zahlung)
+						bestTeam.setBudget(teamBudget - yearlySalary);
+						teamRepository.save(bestTeam);
+
+						// Erstelle Transaction
+						Transaction transaction = new Transaction();
+						transaction.setTeamId(bestTeam.getId());
+						transaction.setAmount(-yearlySalary); // Nur Gehalt, keine Ablöse
+						transaction.setDescription("Freier Agent: " + player.getName() + " verpflichtet");
+						transaction.setType("expense");
+						transaction.setCategory("transfers");
+						transaction.setCreatedAt(LocalDateTime.now());
+						transactionRepository.save(transaction);
+
+						// Markiere das gewinnende Angebot als accepted und lösche alle anderen
+						com.example.manager.repository.FreeAgentOfferRepository freeAgentOfferRepository = this.freeAgentOfferRepository;
+						List<com.example.manager.model.FreeAgentOffer> allOffers = freeAgentOfferRepository
+								.findByPlayerId(player.getId());
+						for (com.example.manager.model.FreeAgentOffer offer : allOffers) {
+							if (offer.getTeamId().equals(freeAgent.getBestOfferTeamId())) {
+								offer.setStatus("accepted");
+								freeAgentOfferRepository.save(offer);
+							}
+						}
+						// Lösche alle Angebote nach kurzer Zeit (oder markiere als abgelehnt)
+						freeAgentOfferRepository.deleteByPlayerId(player.getId());
+
+						System.out.println("[FreeAgents] ✅ " + player.getName() + " wechselt zu " + bestTeam.getName()
+								+ " (Gehalt: " + freeAgent.getBestOfferSalary() + ", Vertrag: "
+								+ freeAgent.getBestOfferContractLength() + " Saisons)");
+
+						// Lösche FreeAgent-Eintrag
+						freeAgentRepository.delete(freeAgent);
+					} else {
+						System.out.println("[FreeAgents] ⚠️ Team " + freeAgent.getBestOfferTeamId()
+								+ " nicht gefunden für " + player.getName());
+					}
+				} else {
+					// Kein Angebot nach 2 Spieltagen: Spieler bleibt frei
+					System.out.println(
+							"[FreeAgents] ℹ️ " + player.getName() + " hat kein Angebot erhalten und bleibt frei");
+
+					// Reset timer damit in 2 weiteren Spieltagen nochmal geprüft wird
+					freeAgent.setMatchdayCreated(currentMatchday);
+					freeAgentRepository.save(freeAgent);
+				}
+			}
+
+		} catch (Exception e) {
+			System.err.println("[FreeAgents] Fehler beim Verarbeiten: " + e.getMessage());
 			e.printStackTrace();
 		}
 	}

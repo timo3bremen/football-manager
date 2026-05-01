@@ -13,6 +13,7 @@ export default function Auth(){
   const [countries, setCountries] = useState([])
   const [selectedCountry, setSelectedCountry] = useState(null)
   const [leagues, setLeagues] = useState([])
+  const [leagueAvailability, setLeagueAvailability] = useState({}) // leagueId -> {cpuTeamsAvailable, canJoin}
   const [selectedLeagueId, setSelectedLeagueId] = useState(null)
   const [loading, setLoading] = useState(false)
   const { setTeam } = useGame()
@@ -51,6 +52,22 @@ export default function Auth(){
        if (res.ok) {
          const data = await res.json()
          setLeagues(data)
+         
+         // Lade CPU-Team Verfügbarkeit für jede Liga
+         const availability = {}
+         for (const league of data) {
+           try {
+             const availRes = await fetch(`${API_BASE}/api/v2/teams/league/${league.id}/available-cpu-teams`)
+             if (availRes.ok) {
+               const availData = await availRes.json()
+               availability[league.id] = availData
+             }
+           } catch (e) {
+             console.error('Fehler beim Laden der Verfügbarkeit für Liga', league.id, e)
+           }
+         }
+         setLeagueAvailability(availability)
+         
          if (data.length > 0) {
            setSelectedLeagueId(data[0].id)
          } else {
@@ -73,6 +90,15 @@ export default function Auth(){
      
      setLoading(true)
      try{
+       // Prüfe zuerst ob CPU-Teams verfügbar sind
+       const checkRes = await fetch(`${API_BASE}/api/v2/teams/league/${selectedLeagueId}/available-cpu-teams`)
+       if (checkRes.ok) {
+         const checkData = await checkRes.json()
+         if (!checkData.canJoin) {
+           throw new Error('In dieser Liga sind keine CPU-Teams mehr verfügbar. Alle Teams werden bereits von Spielern kontrolliert.')
+         }
+       }
+       
        const res = await fetch(`${API_BASE}/api/auth/register-with-league`, { 
          method:'POST', 
          headers:{'Content-Type':'application/json'}, 
@@ -180,12 +206,25 @@ export default function Auth(){
                  style={{ padding: '8px 12px' }}
                >
                  <option value="">-- Liga wählen --</option>
-                 {leagues.map(league => (
-                   <option key={league.id} value={league.id}>
-                     {league.divisionLabel} ({league.filledSlots}/{league.totalSlots} Teams)
-                   </option>
-                 ))}
+                 {leagues.map(league => {
+                   const avail = leagueAvailability[league.id]
+                   const cpuCount = avail ? avail.cpuTeamsAvailable : '?'
+                   const canJoin = avail ? avail.canJoin : true
+                   return (
+                     <option key={league.id} value={league.id} disabled={!canJoin}>
+                       {league.divisionLabel} ({cpuCount} CPU-Teams verfügbar)
+                       {!canJoin ? ' - VOLL' : ''}
+                     </option>
+                   )
+                 })}
                </select>
+               {selectedLeagueId && leagueAvailability[selectedLeagueId] && (
+                 <div style={{ marginTop: 8, fontSize: '0.85em', color: leagueAvailability[selectedLeagueId].canJoin ? '#4ade80' : '#fda4af' }}>
+                   {leagueAvailability[selectedLeagueId].canJoin 
+                     ? `✓ ${leagueAvailability[selectedLeagueId].cpuTeamsAvailable} CPU-Team(s) verfügbar - Du kannst beitreten!`
+                     : '✗ Keine CPU-Teams verfügbar - Liga ist voll mit Spielern'}
+                 </div>
+               )}
              </div>
            )}
 

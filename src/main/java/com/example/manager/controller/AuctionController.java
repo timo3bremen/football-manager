@@ -1,6 +1,8 @@
 package com.example.manager.controller;
 
 import com.example.manager.service.AuctionService;
+import com.example.manager.model.TransferHistory;
+import com.example.manager.repository.TransferHistoryRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -21,15 +23,18 @@ public class AuctionController {
     @Autowired
     private AuctionService auctionService;
 
+    @Autowired
+    private TransferHistoryRepository transferHistoryRepository;
+
     /**
      * Gets all active auction players.
-     * GET /api/v2/auction/active
+     * GET /api/v2/auction/active?teamId=123 (optional)
      */
     @GetMapping("/active")
-    public ResponseEntity<List<Map<String, Object>>> getActiveAuctions() {
+    public ResponseEntity<List<Map<String, Object>>> getActiveAuctions(@RequestParam(required = false) Long teamId) {
         try {
-            System.out.println("[AuctionController] GET /api/v2/auction/active called");
-            List<Map<String, Object>> auctions = auctionService.getActiveAuctions();
+            System.out.println("[AuctionController] GET /api/v2/auction/active called (teamId: " + teamId + ")");
+            List<Map<String, Object>> auctions = auctionService.getActiveAuctionsWithUserBids(teamId);
             System.out.println("[AuctionController] Returning " + auctions.size() + " active auctions");
             return ResponseEntity.ok(auctions);
         } catch (Exception e) {
@@ -185,6 +190,34 @@ public class AuctionController {
                     "success", false,
                     "error", e.getMessage()
             ));
+        }
+    }
+
+    /**
+     * Gets transfer history (all completed auction transfers).
+     * GET /api/v2/auction/transfer-history
+     */
+    @GetMapping("/transfer-history")
+    public ResponseEntity<List<TransferHistory>> getTransferHistory() {
+        try {
+            List<TransferHistory> history = transferHistoryRepository.findAllByOrderByTransferTimeDesc();
+            return ResponseEntity.ok(history);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(new ArrayList<>());
+        }
+    }
+
+    /**
+     * Gets transfer history for a specific team.
+     * GET /api/v2/auction/transfer-history/team/{teamId}
+     */
+    @GetMapping("/transfer-history/team/{teamId}")
+    public ResponseEntity<List<TransferHistory>> getTransferHistoryForTeam(@PathVariable Long teamId) {
+        try {
+            List<TransferHistory> history = transferHistoryRepository.findByToTeamIdOrFromTeamIdOrderByTransferTimeDesc(teamId, teamId);
+            return ResponseEntity.ok(history);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(new ArrayList<>());
         }
     }
 }

@@ -7,8 +7,10 @@ export default function ContractsSection() {
   const [loading, setLoading] = useState(false)
   const [showNegotiationModal, setShowNegotiationModal] = useState(false)
   const [selectedPlayer, setSelectedPlayer] = useState(null)
-  const [negotiationOffer, setNegotiationOffer] = useState(null)
-  const [playerResponse, setPlayerResponse] = useState(null)
+  const [proposedSalary, setProposedSalary] = useState(0)
+  const [proposedContractLength, setProposedContractLength] = useState(3)
+  const [negotiationResult, setNegotiationResult] = useState(null)
+  const [attemptHistory, setAttemptHistory] = useState([]) // Array of {success: boolean, salaryFeedback, contractFeedback}
   const [message, setMessage] = useState('')
 
   const API_BASE = (typeof window !== 'undefined' && window.__API_BASE__) || import.meta.env.VITE_API_URL || 'http://localhost:8080'
@@ -36,93 +38,126 @@ export default function ContractsSection() {
       })
   }
 
-  const generateNegotiationOffer = (player) => {
-    // Gehalt: 5-20% höher als vorher
-    const salaryIncrease = 0.05 + Math.random() * 0.15
-    const newSalary = Math.round(player.salary * (1 + salaryIncrease))
-    
-    // Laufzeit: +1 bis (5 - aktuelle Laufzeit)
-    const maxExtension = Math.max(1, 5 - player.contractLength)
-    const newLength = player.contractLength + (1 + Math.floor(Math.random() * maxExtension))
-    
-    return {
-      player: player,
-      newSalary: newSalary,
-      newLength: newLength,
-      salaryIncrease: Math.round(salaryIncrease * 100)
-    }
-  }
-
   const openNegotiation = (player) => {
-    if (player.contractLength >= 5) {
-      setMessage('❌ Spieler hat bereits maximalen 5-Saisons-Vertrag')
+    if (player.contractLength >= 4) {
+      setMessage('❌ Spieler mit 4+ Saisons Restvertrag können nicht verlängert werden')
       return
     }
     
-    const offer = generateNegotiationOffer(player)
     setSelectedPlayer(player)
-    setNegotiationOffer(offer)
-    setPlayerResponse(null)
+    // Initiales Angebot: Aktuelles Gehalt + 15%
+    setProposedSalary(Math.round(player.salary * 1.15))
+    // Setze initiale Laufzeit auf mindestens currentLength + 1
+    setProposedContractLength(Math.min(5, player.contractLength + 1))
+    setNegotiationResult(null)
     setMessage('')
     setShowNegotiationModal(true)
+    
+    // Lade Verhandlungshistorie
+    fetch(`${API_BASE}/api/v2/players/${player.id}/negotiation-history`)
+      .then(r => r.json())
+      .then(data => {
+        // Erstelle Attempt-History aus Backend-Daten
+        const history = []
+        for (let i = 0; i < data.attemptCount; i++) {
+          history.push({
+            success: false,
+            aborted: data.failed && i === data.attemptCount - 1,
+            salaryFeedback: 'unhappy',
+            contractFeedback: 'unhappy'
+          })
+        }
+        setAttemptHistory(history)
+      })
+      .catch(e => {
+        console.error('Fehler beim Laden der Historie:', e)
+        setAttemptHistory([])
+      })
   }
 
-  const handleNegotiationResponse = (accepted) => {
-    if (accepted) {
-      // Spieler akzeptiert
-      setPlayerResponse({
-        accepted: true,
-        message: `✅ ${selectedPlayer.name} nimmt das Angebot an!`
-      })
-      
-      // Sende zum Backend
-      fetch(`${API_BASE}/api/v2/players/${selectedPlayer.id}/extend-contract`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          newSalary: negotiationOffer.newSalary,
-          newContractLength: negotiationOffer.newLength
-        })
-      })
-        .then(r => r.json())
-        .then(data => {
-          if (data.success) {
-            setContracts(contracts.map(p => 
-              p.id === selectedPlayer.id ? data.player : p
-            ))
-            setTimeout(() => {
-              setShowNegotiationModal(false)
-              setMessage(`✅ Vertrag von ${selectedPlayer.name} verlängert!`)
-            }, 1500)
-          } else {
-            setPlayerResponse({
-              accepted: false,
-              message: '❌ Fehler beim Speichern: ' + data.message
-            })
-          }
-        })
-        .catch(e => {
-          console.error('Fehler:', e)
-          setPlayerResponse({
-            accepted: false,
-            message: '❌ Fehler beim Verlängern des Vertrags'
-          })
-        })
-    } else {
-      // Spieler lehnt ab
-      setPlayerResponse({
-        accepted: false,
-        message: `❌ ${selectedPlayer.name} lehnt das Angebot ab. Zu niedrig?`
-      })
-      setTimeout(() => setShowNegotiationModal(false), 2000)
+  const makeOffer = () => {
+    if (attemptHistory.length >= 3) {
+      setMessage('❌ Maximale Anzahl Versuche erreicht')
+      return
     }
+
+    fetch(`${API_BASE}/api/v2/players/${selectedPlayer.id}/negotiate-contract`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        proposedSalary: proposedSalary,
+        proposedContractLength: proposedContractLength
+      })
+    })
+      .then(r => r.json())
+      .then(data => {
+        setNegotiationResult(data)
+        
+        // Erstelle neue History basierend auf attemptCount vom Backend
+        const newHistory = []
+        for (let i = 0; i < data.attemptCount; i++) {
+          newHistory.push({
+            success: i === data.attemptCount - 1 && data.accepted,
+            aborted: i === data.attemptCount - 1 && data.negotiationAborted,
+            salaryFeedback: i === data.attemptCount - 1 ? data.salaryFeedback : 'unhappy',
+            contractFeedback: i === data.attemptCount - 1 ? data.contractFeedback : 'unhappy'
+          })
+        }
+        setAttemptHistory(newHistory)
+
+        if (data.accepted) {
+          // Erfolg! Aktualisiere Contracts und schließe Modal nach kurzer Verzögerung
+          setTimeout(() => {
+            loadContracts()
+            setShowNegotiationModal(false)
+            setMessage(`✅ ${selectedPlayer.name} hat den Vertrag unterschrieben!`)
+          }, 2000)
+        } else if (data.negotiationAborted) {
+          // Verhandlung abgebrochen
+          setTimeout(() => {
+            setShowNegotiationModal(false)
+            setMessage(`❌ ${selectedPlayer.name} hat die Verhandlungen abgebrochen!`)
+          }, 2500)
+        }
+      })
+      .catch(e => {
+        console.error('Fehler:', e)
+        setNegotiationResult({
+          accepted: false,
+          negotiationAborted: true,
+          message: 'Fehler beim Verhandeln',
+          salaryFeedback: 'unhappy',
+          contractFeedback: 'unhappy',
+          attemptCount: attemptHistory.length + 1
+        })
+      })
+  }
+
+  const closeModal = () => {
+    setShowNegotiationModal(false)
+    setNegotiationResult(null)
+    setAttemptHistory([])
+  }
+
+  const getSmiley = (feedback) => {
+    if (feedback === 'happy') return '😊'
+    if (feedback === 'neutral') return '😐'
+    if (feedback === 'unhappy') return '😢'
+    return '❓'
+  }
+
+  const getSmileyColor = (feedback) => {
+    if (feedback === 'happy') return '#10b981'
+    if (feedback === 'neutral') return '#f59e0b'
+    if (feedback === 'unhappy') return '#ef4444'
+    return '#666'
   }
 
   const getSeasonColor = (seasons) => {
-    if (seasons >= 3) return '#10b981' // Grün - gut
-    if (seasons === 2) return '#f59e0b' // Gelb/Orange - warnung
-    if (seasons === 1) return '#ef4444' // Rot - kritisch
-    return '#dc2626' // Dunkelrot - auslaufend
+    if (seasons >= 3) return '#10b981'
+    if (seasons === 2) return '#f59e0b'
+    if (seasons === 1) return '#ef4444'
+    return '#dc2626'
   }
 
   const getSeasonText = (seasons) => {
@@ -133,7 +168,7 @@ export default function ContractsSection() {
 
   const formatCurrency = (value) => {
     if (value >= 1000000) return '€' + (value / 1000000).toFixed(1) + 'M'
-    if (value >= 1000) return '€' + (value / 1000).toFixed(1) + 'K'
+    if (value >= 1000) return '€' + (value / 1000).toFixed(0) + 'K'
     return '€' + value
   }
 
@@ -216,7 +251,7 @@ export default function ContractsSection() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                     <div className="muted" style={{ fontSize: '0.85em' }}>Gehalt:</div>
                     <div style={{ fontSize: '0.9em', color: '#10b981' }}>
-                      {formatCurrency(player.salary || 0)}
+                      {formatCurrency(player.salary || 0)}/Spieltag
                     </div>
                   </div>
 
@@ -233,17 +268,18 @@ export default function ContractsSection() {
                 <button
                   className="btn primary"
                   onClick={() => openNegotiation(player)}
-                  disabled={player.contractLength >= 5}
+                  disabled={player.contractLength >= 4}
+                  title={player.contractLength >= 4 ? 'Spieler mit 4+ Saisons können nicht verlängert werden' : ''}
                   style={{
                     width: '100%',
                     fontSize: '0.85em',
                     padding: '6px 8px',
-                    opacity: player.contractLength >= 5 ? 0.4 : 1,
-                    cursor: player.contractLength >= 5 ? 'not-allowed' : 'pointer',
-                    backgroundColor: player.contractLength >= 5 ? '#666' : undefined
+                    opacity: player.contractLength >= 4 ? 0.4 : 1,
+                    cursor: player.contractLength >= 4 ? 'not-allowed' : 'pointer',
+                    backgroundColor: player.contractLength >= 4 ? '#666' : undefined
                   }}
                 >
-                  {player.contractLength >= 5 ? '✓ Max. Vertrag' : '🤝 Verlängern'}
+                  {player.contractLength >= 4 ? '✓ Langer Vertrag' : '🤝 Verlängern'}
                 </button>
 
                 {/* Info-Text wenn Vertrag bald ausläuft */}
@@ -272,121 +308,306 @@ export default function ContractsSection() {
             borderLeft: '3px solid #3b82f6'
           }}>
             <div className="muted" style={{ fontSize: '0.85em' }}>
-              💡 <strong>Tipp:</strong> Klicke auf "Verlängern" um ein Vertragsangebot zu machen. Der Spieler wird mit seinem Gehaltswunsch antworten.
+              💡 <strong>Tipp:</strong> Spieler sortiert nach Rating. Klicke auf "Verlängern" um Vertragsverhandlungen zu starten. Du hast maximal 3 Versuche pro Spieler!
             </div>
           </div>
         </div>
       )}
 
       {/* Verhandlungs-Modal */}
-      {showNegotiationModal && negotiationOffer && (
+      {showNegotiationModal && selectedPlayer && (
         <div style={{
           position: 'fixed',
           top: 0,
           left: 0,
           right: 0,
           bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          backgroundColor: 'rgba(0, 0, 0, 0.8)',
           display: 'flex',
           justifyContent: 'center',
           alignItems: 'center',
           zIndex: 1000
-        }}>
+        }} onClick={() => !negotiationResult && closeModal()}>
           <div style={{
-            backgroundColor: '#1a1a1a',
-            border: '2px solid #666',
-            borderRadius: '8px',
-            padding: '20px',
-            maxWidth: '400px',
-            width: '90%'
-          }}>
-            <h4 style={{ marginTop: 0, marginBottom: '15px' }}>
-              📋 Vertragsverhandlung mit {selectedPlayer.name}
-            </h4>
+            backgroundColor: '#1e293b',
+            border: '2px solid rgba(255,255,255,0.2)',
+            borderRadius: '12px',
+            padding: '24px',
+            maxWidth: '500px',
+            width: '90%',
+            maxHeight: '90vh',
+            overflowY: 'auto'
+          }} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ marginTop: 0, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              🤝 Vertragsverhandlung
+            </h3>
 
-            {!playerResponse ? (
+            {/* Spieler Info */}
+            <div style={{
+              padding: '12px',
+              background: 'rgba(255,255,255,0.05)',
+              borderRadius: '8px',
+              marginBottom: '16px'
+            }}>
+              <div style={{ fontWeight: 'bold', fontSize: '1.1em', marginBottom: '4px' }}>
+                {selectedPlayer.name}
+              </div>
+              <div style={{ fontSize: '0.85em', color: '#9ca3af' }}>
+                {selectedPlayer.position} • ⭐ {selectedPlayer.rating} • {selectedPlayer.age} Jahre
+              </div>
+              <div style={{ fontSize: '0.85em', color: '#9ca3af', marginTop: '4px' }}>
+                Aktuell: {formatCurrency(selectedPlayer.salary)}/Spieltag • {selectedPlayer.contractLength} Saisons
+              </div>
+            </div>
+
+            {/* Versuche-Balken */}
+            <div style={{ marginBottom: '16px' }}>
+              <div className="muted" style={{ fontSize: '0.85em', marginBottom: '8px' }}>
+                Verhandlungsversuche ({attemptHistory.length}/3)
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                {[0, 1, 2].map(index => {
+                  const attempt = attemptHistory[index]
+                  let bgColor = '#374151' // Grau (nicht verwendet)
+                  if (attempt) {
+                    if (attempt.aborted) {
+                      bgColor = '#7f1d1d' // Dunkelrot (abgebrochen)
+                    } else if (attempt.success) {
+                      bgColor = '#10b981' // Grün (Erfolg)
+                    } else {
+                      bgColor = '#ef4444' // Rot (Fehlschlag)
+                    }
+                  }
+                  return (
+                    <div key={index} style={{
+                      flex: 1,
+                      height: '8px',
+                      background: bgColor,
+                      borderRadius: '4px',
+                      transition: 'all 0.3s ease'
+                    }} />
+                  )
+                })}
+              </div>
+            </div>
+
+            {!negotiationResult ? (
               <div>
-                <div style={{
-                  backgroundColor: '#1a3a1a',
-                  padding: '12px',
-                  borderRadius: '6px',
-                  marginBottom: '15px'
-                }}>
-                  <p style={{ margin: '8px 0', fontSize: '0.9em' }}>
-                    <strong>Spieler schlägt vor:</strong>
-                  </p>
-                  <p style={{ margin: '8px 0', color: '#90ee90' }}>
-                    💰 Neues Gehalt: {formatCurrency(negotiationOffer.newSalary)}/Saison
-                    <br/>
-                    <span style={{ fontSize: '0.85em', color: '#70d070' }}>
-                      (+{negotiationOffer.salaryIncrease}% zu vorher {formatCurrency(selectedPlayer.salary)})
-                    </span>
-                  </p>
-                  <p style={{ margin: '8px 0', color: '#60a5fa' }}>
-                    📅 Neue Laufzeit: {negotiationOffer.newLength} Saisons
-                    <br/>
-                    <span style={{ fontSize: '0.85em', color: '#4a9eff' }}>
-                      (+{negotiationOffer.newLength - selectedPlayer.contractLength} Saisons zu vorher {selectedPlayer.contractLength})
-                    </span>
-                  </p>
+                {/* Gehalts-Input */}
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={{ display: 'block', marginBottom: '8px', fontSize: '0.9em' }}>
+                    💰 Gehalt pro Spieltag
+                  </label>
+                  <input
+                    type="text"
+                    value={proposedSalary.toLocaleString('de-DE')}
+                    onChange={(e) => {
+                      // Entferne alle Nicht-Ziffern
+                      const rawValue = e.target.value.replace(/\D/g, '')
+                      const numValue = rawValue === '' ? 0 : parseInt(rawValue)
+                      setProposedSalary(numValue)
+                    }}
+                    onFocus={(e) => {
+                      // Wenn 0, selektiere alles damit es beim Tippen ersetzt wird
+                      if (proposedSalary === 0) {
+                        e.target.select()
+                      }
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '8px',
+                      borderRadius: '4px',
+                      border: '1px solid rgba(255,255,255,0.2)',
+                      background: 'rgba(0,0,0,0.3)',
+                      color: '#fff',
+                      fontSize: '0.95em'
+                    }}
+                  />
+                  <div style={{ fontSize: '0.8em', color: '#9ca3af', marginTop: '4px' }}>
+                    {formatCurrency(proposedSalary)}
+                  </div>
                 </div>
 
-                <div style={{
-                  display: 'flex',
-                  gap: '10px',
-                  justifyContent: 'space-between'
-                }}>
+                {/* Vertragslaufzeit-Input */}
+                <div style={{ marginBottom: '20px' }}>
+                  <label style={{ display: 'block', marginBottom: '8px', fontSize: '0.9em' }}>
+                    📅 Vertragslaufzeit (nur Verlängerung möglich)
+                  </label>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    {[2, 3, 4, 5].map(length => {
+                      const isDisabled = length <= selectedPlayer.contractLength
+                      return (
+                        <button
+                          key={length}
+                          onClick={() => !isDisabled && setProposedContractLength(length)}
+                          disabled={isDisabled}
+                          title={isDisabled ? `Aktuell: ${selectedPlayer.contractLength} Saisons - Nur höhere Laufzeiten möglich` : ''}
+                          style={{
+                            flex: 1,
+                            padding: '10px',
+                            borderRadius: '6px',
+                            border: proposedContractLength === length ? '2px solid #3b82f6' : '1px solid rgba(255,255,255,0.2)',
+                            background: isDisabled ? 'rgba(100,100,100,0.3)' : (proposedContractLength === length ? 'rgba(59, 130, 246, 0.2)' : 'rgba(0,0,0,0.3)'),
+                            color: isDisabled ? '#666' : '#fff',
+                            cursor: isDisabled ? 'not-allowed' : 'pointer',
+                            fontWeight: proposedContractLength === length ? 'bold' : 'normal',
+                            fontSize: '0.9em',
+                            opacity: isDisabled ? 0.5 : 1
+                          }}
+                        >
+                          {length} {length === 1 ? 'Saison' : 'Saisons'}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {/* Buttons */}
+                <div style={{ display: 'flex', gap: '10px' }}>
                   <button
-                    onClick={() => handleNegotiationResponse(true)}
+                    onClick={makeOffer}
+                    disabled={attemptHistory.length >= 3 || (negotiationResult && negotiationResult.negotiationAborted)}
                     style={{
                       flex: 1,
-                      padding: '10px',
+                      padding: '12px',
                       backgroundColor: '#10b981',
                       color: '#fff',
                       border: 'none',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                      fontWeight: 'bold'
+                      borderRadius: '6px',
+                      cursor: attemptHistory.length >= 3 ? 'not-allowed' : 'pointer',
+                      fontWeight: 'bold',
+                      fontSize: '0.95em',
+                      opacity: attemptHistory.length >= 3 ? 0.5 : 1
                     }}
                   >
-                    ✅ Akzeptieren
+                    📝 Angebot machen
                   </button>
                   <button
-                    onClick={() => handleNegotiationResponse(false)}
+                    onClick={closeModal}
                     style={{
-                      flex: 1,
-                      padding: '10px',
-                      backgroundColor: '#ef4444',
+                      padding: '12px 20px',
+                      backgroundColor: '#6b7280',
                       color: '#fff',
                       border: 'none',
-                      borderRadius: '4px',
+                      borderRadius: '6px',
                       cursor: 'pointer',
-                      fontWeight: 'bold'
+                      fontSize: '0.95em'
                     }}
                   >
-                    ❌ Ablehnen
+                    ❌ Abbrechen
                   </button>
                 </div>
               </div>
             ) : (
-              <div style={{ textAlign: 'center' }}>
+              <div>
+                {/* Feedback nach Angebot */}
                 <div style={{
-                  fontSize: '2em',
-                  marginBottom: '10px'
+                  padding: '16px',
+                  background: negotiationResult.accepted ? 'rgba(16, 185, 129, 0.1)' : 
+                             negotiationResult.negotiationAborted ? 'rgba(239, 68, 68, 0.1)' : 
+                             'rgba(245, 158, 11, 0.1)',
+                  borderRadius: '8px',
+                  border: '2px solid ' + (negotiationResult.accepted ? '#10b981' : 
+                                         negotiationResult.negotiationAborted ? '#ef4444' : '#f59e0b'),
+                  marginBottom: '16px'
                 }}>
-                  {playerResponse.accepted ? '🎉' : '😔'}
+                  {/* Spieler Reaktion */}
+                  <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+                    <div style={{ fontSize: '3em', marginBottom: '8px' }}>
+                      {negotiationResult.accepted ? '🎉' : 
+                       negotiationResult.negotiationAborted ? '🚫' : '🤔'}
+                    </div>
+                    <div style={{ 
+                      fontWeight: 'bold', 
+                      fontSize: '1.1em',
+                      color: negotiationResult.accepted ? '#10b981' : 
+                             negotiationResult.negotiationAborted ? '#ef4444' : '#f59e0b'
+                    }}>
+                      {negotiationResult.message}
+                    </div>
+                  </div>
+
+                  {/* Feedback-Details nur wenn nicht abgebrochen und nicht akzeptiert */}
+                  {!negotiationResult.accepted && !negotiationResult.negotiationAborted && (
+                    <div style={{ display: 'flex', gap: '16px', justifyContent: 'center' }}>
+                      <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: '0.85em', color: '#9ca3af', marginBottom: '4px' }}>
+                          Gehalt
+                        </div>
+                        <div style={{ 
+                          fontSize: '2.5em',
+                          color: getSmileyColor(negotiationResult.salaryFeedback)
+                        }}>
+                          {getSmiley(negotiationResult.salaryFeedback)}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: '0.85em', color: '#9ca3af', marginBottom: '4px' }}>
+                          Vertragslaufzeit
+                        </div>
+                        <div style={{ 
+                          fontSize: '2.5em',
+                          color: getSmileyColor(negotiationResult.contractFeedback)
+                        }}>
+                          {getSmiley(negotiationResult.contractFeedback)}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <p style={{
-                  color: playerResponse.accepted ? '#90ee90' : '#ff6b6b',
-                  marginBottom: '15px',
-                  fontSize: '0.95em'
-                }}>
-                  {playerResponse.message}
-                </p>
-                {playerResponse.accepted && (
-                  <p style={{ fontSize: '0.85em', color: '#aaa' }}>
-                    Der Vertrag wird aktualisiert...
-                  </p>
+
+                {/* Buttons */}
+                {negotiationResult.accepted || negotiationResult.negotiationAborted ? (
+                  <button
+                    onClick={closeModal}
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      backgroundColor: '#3b82f6',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      fontWeight: 'bold',
+                      fontSize: '0.95em'
+                    }}
+                  >
+                    Schließen
+                  </button>
+                ) : attemptHistory.length < 3 ? (
+                  <button
+                    onClick={() => setNegotiationResult(null)}
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      backgroundColor: '#f59e0b',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      fontWeight: 'bold',
+                      fontSize: '0.95em'
+                    }}
+                  >
+                    🔄 Neues Angebot machen ({3 - attemptHistory.length} Versuche übrig)
+                  </button>
+                ) : (
+                  <button
+                    onClick={closeModal}
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      backgroundColor: '#ef4444',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      fontWeight: 'bold',
+                      fontSize: '0.95em'
+                    }}
+                  >
+                    Verhandlung beenden (Keine Versuche mehr)
+                  </button>
                 )}
               </div>
             )}

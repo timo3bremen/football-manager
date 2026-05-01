@@ -55,7 +55,7 @@ public class LineupService {
 					System.out.println("[LineupService] WARNING: Player " + playerId + " does not exist! Skipping this slot.");
 					continue;  // Überspringe diesen Slot, da der Spieler nicht existiert
 				}
-				if (!player.getTeamId().equals(teamId)) {
+				if (player.getTeamId() == null || !player.getTeamId().equals(teamId)) {
 					System.out.println("[LineupService] WARNING: Player " + playerId + " does not belong to team " + teamId + "! Skipping this slot.");
 					continue;  // Überspringe, wenn der Spieler nicht zum Team gehört
 				}

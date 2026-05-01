@@ -10,5 +10,6 @@ import java.util.List;
 public interface CupTeamRepository extends JpaRepository<CupTeam, Long> {
     List<CupTeam> findByTournamentId(Long tournamentId);
     List<CupTeam> findByTournamentIdAndIsActive(Long tournamentId, boolean isActive);
+    List<CupTeam> findByTeamId(Long teamId);
     void deleteByTournamentId(Long tournamentId);
 }

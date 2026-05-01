@@ -24,6 +24,8 @@ export default function Schedule(){
    const [selectedLeague, setSelectedLeague] = useState(userLeagueId)
    const [countriesLoaded, setCountriesLoaded] = useState(false)
    const [initialLoadComplete, setInitialLoadComplete] = useState(false)
+   const [showAllScorers, setShowAllScorers] = useState(false) // Für Torschützen aufklappen
+   const [showAllAssisters, setShowAllAssisters] = useState(false) // Für Vorlagengeber aufklappen
 
   const API_BASE = (typeof window !== 'undefined' && window.__API_BASE__) || import.meta.env.VITE_API_URL || 'http://localhost:8080'
 
@@ -612,20 +614,26 @@ export default function Schedule(){
                    <p className="muted">Transferfenster geöffnet</p>
                    <p className="muted" style={{ fontSize: '0.9em', marginTop: 8 }}>Keine Spiele in dieser Periode</p>
                  </div>
-                ) : matchday && matchday.matches ? (
-                  <div>
-                    {matchday.matches.map((match, idx) => (
-                     <div 
-                       key={idx}
-                       className="card match-card"
-                       style={{ 
-                         display: 'flex',
-                         justifyContent: 'space-between',
-                         alignItems: 'center',
-                         padding: '12px',
-                         marginBottom: 8
-                       }}
-                     >
+                 ) : matchday && matchday.matches ? (
+                   <div>
+                     {matchday.matches.map((match, idx) => {
+                       // Prüfe ob dies das Spiel des User-Teams ist
+                       const isUserMatch = (match.homeTeamId === team.id || match.awayTeamId === team.id)
+                       
+                       return (
+                      <div 
+                        key={idx}
+                        className="card match-card"
+                        style={{ 
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          padding: '12px',
+                          marginBottom: 8,
+                          background: isUserMatch ? 'linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(37, 99, 235, 0.05))' : undefined,
+                          border: isUserMatch ? '2px solid rgba(59, 130, 246, 0.4)' : undefined
+                        }}
+                      >
                        {/* Desktop: Horizontal Layout */}
                        <div className="match-desktop" style={{
                          display: 'flex',
@@ -846,8 +854,9 @@ export default function Schedule(){
                         )}
                        </div>
                      </div>
-                   ))}
-                 </div>
+                    )
+                   })}
+                  </div>
               ) : (
                 <p className="muted">Keine Spiele verfügbar</p>
               )}
@@ -969,6 +978,11 @@ export default function Schedule(){
                   <div>🏟️ Stadion: <strong>{selectedTeamDetails.stadiumCapacity?.toLocaleString() || 'Unbekannt'} Plätze</strong></div>
                   {selectedTeamDetails.country && <div>🌍 Land: <strong>{selectedTeamDetails.country}</strong></div>}
                   {selectedTeamDetails.leagueName && <div>🏆 Liga: <strong>{selectedTeamDetails.leagueName}</strong></div>}
+                  {selectedTeamDetails.budget !== undefined && (
+                    <div style={{ color: '#ffd700', marginTop: 4 }}>
+                      💰 Budget: <strong>{(selectedTeamDetails.budget / 1000000).toFixed(2)}M €</strong> <span style={{ fontSize: '0.8em', opacity: 0.7 }}>(Test-Info)</span>
+                    </div>
+                  )}
                 </div>
               </div>
               <button
@@ -994,14 +1008,24 @@ export default function Schedule(){
                 <div>
                   {selectedTeamDetails.lineup.map((player) => (
                     <div key={player.playerId} className="card" style={{ marginBottom: 8, padding: '10px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div>
                           <strong>{player.playerName}</strong>
-                          <div className="muted" style={{ fontSize: '0.85em' }}>{player.position}</div>
+                          <div className="muted" style={{ fontSize: '0.85em' }}>
+                            {player.position} • {player.age || '?'} Jahre
+                          </div>
                         </div>
-                        <div style={{ textAlign: 'right' }}>
-                          <strong>{player.rating}</strong>
-                          <div className="muted" style={{ fontSize: '0.85em' }}>Rating</div>
+                        <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+                          <div style={{ textAlign: 'right' }}>
+                            <strong>{player.rating}</strong>
+                            <div className="muted" style={{ fontSize: '0.85em' }}>Rating</div>
+                          </div>
+                          <div style={{ textAlign: 'right' }}>
+                            <strong style={{ color: player.fitness >= 80 ? '#4CAF50' : player.fitness >= 50 ? '#FFC107' : '#F44336' }}>
+                              {player.fitness || '?'}
+                            </strong>
+                            <div className="muted" style={{ fontSize: '0.85em' }}>Fitness</div>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -1023,6 +1047,7 @@ export default function Schedule(){
                         <th style={{ padding: '8px', textAlign: 'left' }}>Name</th>
                         <th style={{ padding: '8px', textAlign: 'center' }}>Pos</th>
                         <th style={{ padding: '8px', textAlign: 'center' }}>Rating</th>
+                        <th style={{ padding: '8px', textAlign: 'center' }}>Fitness</th>
                         <th style={{ padding: '8px', textAlign: 'center' }}>Alter</th>
                         <th style={{ padding: '8px', textAlign: 'center' }}>Land</th>
                       </tr>
@@ -1033,6 +1058,9 @@ export default function Schedule(){
                           <td style={{ padding: '8px' }}>{player.playerName}</td>
                           <td style={{ padding: '8px', textAlign: 'center', color: '#999', fontSize: '0.9em' }}>{player.position}</td>
                           <td style={{ padding: '8px', textAlign: 'center', fontWeight: 'bold' }}>{player.rating}</td>
+                          <td style={{ padding: '8px', textAlign: 'center', fontWeight: 'bold', color: player.fitness >= 80 ? '#4CAF50' : player.fitness >= 50 ? '#FFC107' : '#F44336' }}>
+                            {player.fitness || '?'}
+                          </td>
                           <td style={{ padding: '8px', textAlign: 'center', color: '#999' }}>{player.age}</td>
                           <td style={{ padding: '8px', textAlign: 'center', color: '#999', fontSize: '0.85em' }}>{player.country}</td>
                         </tr>
@@ -1058,36 +1086,149 @@ export default function Schedule(){
             <div>
               {/* 1. Torschützen */}
               <div style={{ marginBottom: 24 }}>
-                <h5 style={{ marginBottom: 12, color: '#4ade80' }}>⚽ Torschützen</h5>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <h5 style={{ margin: 0, color: '#4ade80' }}>⚽ Torschützen</h5>
+                  {statistics.totalScorers > 20 && (
+                    <button
+                      onClick={() => {
+                        if (!showAllScorers) {
+                          // Lade alle Torschützen
+                          const leagueId = selectedLeague || userLeagueId
+                          fetch(`${API_BASE}/api/v2/schedule/all-scorers/league/${leagueId}`)
+                            .then(r => r.json())
+                            .then(data => {
+                              setStatistics({...statistics, topScorers: data})
+                              setShowAllScorers(true)
+                            })
+                            .catch(e => console.error('Fehler beim Laden aller Torschützen:', e))
+                        } else {
+                          // Zurück zu Top 20
+                          setShowAllScorers(false)
+                          loadStatistics()
+                        }
+                      }}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: 4,
+                        border: '1px solid rgba(255,255,255,0.2)',
+                        background: 'rgba(255,255,255,0.1)',
+                        color: '#fff',
+                        cursor: 'pointer',
+                        fontSize: '0.9em'
+                      }}
+                    >
+                      {showAllScorers ? '📋 Top 20' : '📋 Alle anzeigen'}
+                    </button>
+                  )}
+                </div>
                 {statistics.topScorers && statistics.topScorers.length > 0 ? (
-                  <div style={{ overflowX: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                      <thead>
-                        <tr style={{ borderBottom: '2px solid rgba(255,255,255,0.2)' }}>
-                          <th style={{ padding: '8px', textAlign: 'left' }}>Spieler</th>
-                          <th style={{ padding: '8px', textAlign: 'left' }}>Position</th>
-                          <th style={{ padding: '8px', textAlign: 'left' }}>Team</th>
-                          <th style={{ padding: '8px', textAlign: 'center' }}>Tore</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {statistics.topScorers.map((player, idx) => (
-                          <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                            <td style={{ padding: '8px' }}>{player.playerName}</td>
-                            <td style={{ padding: '8px', fontSize: '0.9em', color: '#999' }}>{player.position}</td>
-                            <td style={{ padding: '8px' }}>{player.teamName}</td>
-                            <td style={{ padding: '8px', textAlign: 'center', fontWeight: 'bold', color: '#4ade80' }}>{player.goals}</td>
+                  <div>
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ borderBottom: '2px solid rgba(255,255,255,0.2)' }}>
+                            <th style={{ padding: '8px', textAlign: 'left' }}>Spieler</th>
+                            <th style={{ padding: '8px', textAlign: 'left' }}>Position</th>
+                            <th style={{ padding: '8px', textAlign: 'left' }}>Team</th>
+                            <th style={{ padding: '8px', textAlign: 'center' }}>Tore</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {statistics.topScorers.map((player, idx) => (
+                            <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                              <td style={{ padding: '8px' }}>{player.playerName}</td>
+                              <td style={{ padding: '8px', fontSize: '0.9em', color: '#999' }}>{player.position}</td>
+                              <td style={{ padding: '8px' }}>{player.teamName}</td>
+                              <td style={{ padding: '8px', textAlign: 'center', fontWeight: 'bold', color: '#4ade80' }}>{player.goals}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {!showAllScorers && statistics.totalScorers > 20 && (
+                      <div style={{ marginTop: 8, fontSize: '0.9em', color: '#999', textAlign: 'center' }}>
+                        Zeige 20 von {statistics.totalScorers} Torschützen
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <p className="muted">Keine Torschützen</p>
                 )}
               </div>
 
-              {/* 2. Zu Null Spiele */}
+              {/* 2. Vorlagengeber */}
+              <div style={{ marginBottom: 24 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <h5 style={{ margin: 0, color: '#60a5fa' }}>🎯 Vorlagengeber</h5>
+                  {statistics.totalAssisters > 20 && (
+                    <button
+                      onClick={() => {
+                        if (!showAllAssisters) {
+                          // Lade alle Vorlagengeber
+                          const leagueId = selectedLeague || userLeagueId
+                          fetch(`${API_BASE}/api/v2/schedule/all-assisters/league/${leagueId}`)
+                            .then(r => r.json())
+                            .then(data => {
+                              setStatistics({...statistics, topAssisters: data})
+                              setShowAllAssisters(true)
+                            })
+                            .catch(e => console.error('Fehler beim Laden aller Vorlagengeber:', e))
+                        } else {
+                          // Zurück zu Top 20
+                          setShowAllAssisters(false)
+                          loadStatistics()
+                        }
+                      }}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: 4,
+                        border: '1px solid rgba(255,255,255,0.2)',
+                        background: 'rgba(255,255,255,0.1)',
+                        color: '#fff',
+                        cursor: 'pointer',
+                        fontSize: '0.9em'
+                      }}
+                    >
+                      {showAllAssisters ? '📋 Top 20' : '📋 Alle anzeigen'}
+                    </button>
+                  )}
+                </div>
+                {statistics.topAssisters && statistics.topAssisters.length > 0 ? (
+                  <div>
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ borderBottom: '2px solid rgba(255,255,255,0.2)' }}>
+                            <th style={{ padding: '8px', textAlign: 'left' }}>Spieler</th>
+                            <th style={{ padding: '8px', textAlign: 'left' }}>Position</th>
+                            <th style={{ padding: '8px', textAlign: 'left' }}>Team</th>
+                            <th style={{ padding: '8px', textAlign: 'center' }}>Vorlagen</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {statistics.topAssisters.map((player, idx) => (
+                            <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                              <td style={{ padding: '8px' }}>{player.playerName}</td>
+                              <td style={{ padding: '8px', fontSize: '0.9em', color: '#999' }}>{player.position}</td>
+                              <td style={{ padding: '8px' }}>{player.teamName}</td>
+                              <td style={{ padding: '8px', textAlign: 'center', fontWeight: 'bold', color: '#60a5fa' }}>{player.goals}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {!showAllAssisters && statistics.totalAssisters > 20 && (
+                      <div style={{ marginTop: 8, fontSize: '0.9em', color: '#999', textAlign: 'center' }}>
+                        Zeige 20 von {statistics.totalAssisters} Vorlagengebern
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="muted">Keine Vorlagengeber</p>
+                )}
+              </div>
+
+              {/* 3. Zu Null Spiele */}
               <div style={{ marginBottom: 24 }}>
                 <h5 style={{ marginBottom: 12, color: '#10b981' }}>🛡️ Zu Null Spiele</h5>
                 {statistics.cleanSheets && statistics.cleanSheets.length > 0 ? (
@@ -1203,6 +1344,125 @@ export default function Schedule(){
                 <p className="muted">Keine Tore</p>
               )}
             </div>
+
+            {/* Spieler-Bewertungen */}
+            {(matchReport.homePlayerRatings || matchReport.awayPlayerRatings) && (
+              <div style={{ marginTop: 24 }}>
+                <h4>📊 Spielerbewertungen</h4>
+                
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                   {/* Heimteam Bewertungen */}
+                  <div>
+                    <h5 style={{ marginBottom: 12, color: '#4ade80' }}>{matchReport.homeTeamName}</h5>
+                    {matchReport.homePlayerRatings && matchReport.homePlayerRatings.length > 0 ? (
+                      <div style={{ fontSize: '14px' }}>
+                        {matchReport.homePlayerRatings.map((player, idx) => (
+                          <div key={idx} style={{
+                            padding: '8px',
+                            marginBottom: '6px',
+                            background: 'rgba(255,255,255,0.05)',
+                            borderRadius: '4px',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center'
+                          }}>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontWeight: 500 }}>{player.playerName}</div>
+                              <div style={{ fontSize: '12px', color: '#999', marginTop: 2 }}>
+                                {player.position}
+                                {player.goals > 0 && <span style={{ marginLeft: 6 }}>⚽ {player.goals}</span>}
+                                {player.assists > 0 && <span style={{ marginLeft: 6 }}>🎯 {player.assists}</span>}
+                                {player.yellowCards > 0 && <span style={{ marginLeft: 6 }}>🟨 {player.yellowCards}</span>}
+                                {player.redCards > 0 && <span style={{ marginLeft: 6 }}>🟥 {player.redCards}</span>}
+                              </div>
+                            </div>
+                            <div style={{
+                              fontWeight: 'bold',
+                              fontSize: '16px',
+                              padding: '4px 8px',
+                              borderRadius: '4px',
+                              background: player.rating <= 2.0 ? '#4ade80' : 
+                                         player.rating <= 3.0 ? '#60a5fa' :
+                                         player.rating <= 4.0 ? '#fbbf24' :
+                                         player.rating <= 5.0 ? '#fb923c' : '#ef4444',
+                              color: '#000'
+                            }}>
+                              {player.rating.toFixed(1)}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p style={{ color: '#999', fontSize: '14px' }}>Keine Bewertungen</p>
+                    )}
+                  </div>
+
+                  {/* Auswärtsteam Bewertungen */}
+                  <div>
+                    <h5 style={{ marginBottom: 12, color: '#60a5fa' }}>{matchReport.awayTeamName}</h5>
+                    {matchReport.awayPlayerRatings && matchReport.awayPlayerRatings.length > 0 ? (
+                      <div style={{ fontSize: '14px' }}>
+                        {matchReport.awayPlayerRatings.map((player, idx) => (
+                          <div key={idx} style={{
+                            padding: '8px',
+                            marginBottom: '6px',
+                            background: 'rgba(255,255,255,0.05)',
+                            borderRadius: '4px',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center'
+                          }}>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontWeight: 500 }}>{player.playerName}</div>
+                              <div style={{ fontSize: '12px', color: '#999', marginTop: 2 }}>
+                                {player.position}
+                                {player.goals > 0 && <span style={{ marginLeft: 6 }}>⚽ {player.goals}</span>}
+                                {player.assists > 0 && <span style={{ marginLeft: 6 }}>🎯 {player.assists}</span>}
+                                {player.yellowCards > 0 && <span style={{ marginLeft: 6 }}>🟨 {player.yellowCards}</span>}
+                                {player.redCards > 0 && <span style={{ marginLeft: 6 }}>🟥 {player.redCards}</span>}
+                              </div>
+                            </div>
+                            <div style={{
+                              fontWeight: 'bold',
+                              fontSize: '16px',
+                              padding: '4px 8px',
+                              borderRadius: '4px',
+                              background: player.rating <= 2.0 ? '#4ade80' : 
+                                         player.rating <= 3.0 ? '#60a5fa' :
+                                         player.rating <= 4.0 ? '#fbbf24' :
+                                         player.rating <= 5.0 ? '#fb923c' : '#ef4444',
+                              color: '#000'
+                            }}>
+                              {player.rating.toFixed(1)}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p style={{ color: '#999', fontSize: '14px' }}>Keine Bewertungen</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Noten-Legende */}
+                <div style={{ 
+                  marginTop: 16, 
+                  padding: 12, 
+                  background: 'rgba(255,255,255,0.05)', 
+                  borderRadius: 4,
+                  fontSize: '12px'
+                }}>
+                  <strong>Noten-Legende:</strong>
+                  <div style={{ display: 'flex', gap: 12, marginTop: 6, flexWrap: 'wrap' }}>
+                    <span><span style={{ background: '#4ade80', color: '#000', padding: '2px 6px', borderRadius: 3, fontWeight: 'bold' }}>1.0-2.0</span> Hervorragend</span>
+                    <span><span style={{ background: '#60a5fa', color: '#000', padding: '2px 6px', borderRadius: 3, fontWeight: 'bold' }}>2.1-3.0</span> Gut</span>
+                    <span><span style={{ background: '#fbbf24', color: '#000', padding: '2px 6px', borderRadius: 3, fontWeight: 'bold' }}>3.1-4.0</span> Durchschnitt</span>
+                    <span><span style={{ background: '#fb923c', color: '#000', padding: '2px 6px', borderRadius: 3, fontWeight: 'bold' }}>4.1-5.0</span> Schwach</span>
+                    <span><span style={{ background: '#ef4444', color: '#000', padding: '2px 6px', borderRadius: 3, fontWeight: 'bold' }}>5.1-6.0</span> Sehr schwach</span>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

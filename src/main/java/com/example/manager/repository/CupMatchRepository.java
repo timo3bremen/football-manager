@@ -11,5 +11,7 @@ public interface CupMatchRepository extends JpaRepository<CupMatch, Long> {
     List<CupMatch> findByTournamentId(Long tournamentId);
     List<CupMatch> findByTournamentIdAndRound(Long tournamentId, int round);
     List<CupMatch> findByTournamentIdAndStatus(Long tournamentId, String status);
+    List<CupMatch> findByHomeTeamId(Long homeTeamId);
+    List<CupMatch> findByAwayTeamId(Long awayTeamId);
     void deleteByTournamentId(Long tournamentId);
 }

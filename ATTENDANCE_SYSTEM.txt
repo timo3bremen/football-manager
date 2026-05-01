@@ -1,3 +1,6 @@
+Ich brauche keine markdown Dateien von dem was du gemacht hast und bitte keine Befehle im Terminal ausführen wollen
+
+
 # Zuschauereinnahmen & Fanfreundschaft System
 
 ## Übersicht

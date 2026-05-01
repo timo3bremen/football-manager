@@ -3,7 +3,7 @@ import { useGame } from './GameContext'
 
 export default function Clock(){
   const [time, setTime] = useState(new Date())
-  const { currentMatchday, setCurrentMatchday, season } = useGame()
+  const { currentMatchday, setCurrentMatchday, season, setSeason } = useGame()
   const API_BASE = (typeof window !== 'undefined' && window.__API_BASE__) || import.meta.env.VITE_API_URL || 'http://localhost:8080'
 
   useEffect(() => {
@@ -14,13 +14,14 @@ export default function Clock(){
     return () => clearInterval(timer)
   }, [])
 
-  // Lade aktuellen Spieltag bei Mount und aktualisiere periodisch
+  // Lade aktuellen Spieltag und Saison bei Mount und aktualisiere periodisch
   useEffect(() => {
     const loadMatchday = () => {
       fetch(`${API_BASE}/api/v2/schedule/current-matchday`)
         .then(r => r.json())
         .then(data => {
           setCurrentMatchday(data.currentMatchday || 1)
+          setSeason(data.currentSeason || 1)
         })
         .catch(e => console.error('Fehler beim Laden des Spieltags:', e))
     }
@@ -31,7 +32,7 @@ export default function Clock(){
     const timer = setInterval(loadMatchday, 60000)
     
     return () => clearInterval(timer)
-  }, [setCurrentMatchday])
+  }, [setCurrentMatchday, setSeason])
 
   const formatDate = (date) => {
     const options = { weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit' }

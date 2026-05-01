@@ -16,6 +16,8 @@ public class MatchReportDTO {
 	private String result; // "home", "away", "draw"
 	private List<MatchEventDTO> events;
 	private Long attendance; // Zuschauerzahl
+	private List<PlayerRatingDTO> homePlayerRatings; // Bewertungen Heimteam
+	private List<PlayerRatingDTO> awayPlayerRatings; // Bewertungen Auswärtsteam
 
 	public MatchReportDTO() {
 	}
@@ -112,5 +114,21 @@ public class MatchReportDTO {
 
 	public void setAttendance(Long attendance) {
 		this.attendance = attendance;
+	}
+
+	public List<PlayerRatingDTO> getHomePlayerRatings() {
+		return homePlayerRatings;
+	}
+
+	public void setHomePlayerRatings(List<PlayerRatingDTO> homePlayerRatings) {
+		this.homePlayerRatings = homePlayerRatings;
+	}
+
+	public List<PlayerRatingDTO> getAwayPlayerRatings() {
+		return awayPlayerRatings;
+	}
+
+	public void setAwayPlayerRatings(List<PlayerRatingDTO> awayPlayerRatings) {
+		this.awayPlayerRatings = awayPlayerRatings;
 	}
 }

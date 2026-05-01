@@ -8,19 +8,15 @@ export default function Club(){
   const [showSponsorModal, setShowSponsorModal] = useState(false)
   const [sponsor, setSponsor] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [sponsorOptions, setSponsorOptions] = useState([])
 
   const API_BASE = (typeof window !== 'undefined' && window.__API_BASE__) || import.meta.env.VITE_API_URL || 'http://localhost:8080'
-
-  const sponsorOptions = [
-    { key:'s1', name:'SportCo', payouts: { appearance:40000, win:100000, survive:4000000, title:15000000 } },
-    { key:'s2', name:'MegaCorp', payouts: { appearance:70000, win:20000, survive:7000000, title:12000000 } },
-    { key:'s3', name:'LocalBank', payouts: { appearance:120000, win:100000, survive:1000000, title:5000000 } },
-  ]
 
   // Load sponsor when team changes or on mount
   useEffect(() => {
     if (team && team.id) {
       loadSponsor()
+      loadSponsorOptions()
     }
   }, [team && team.id])
 
@@ -29,6 +25,7 @@ export default function Club(){
     const handleTeamUpdate = () => {
       if (team && team.id) {
         loadSponsor()
+        loadSponsorOptions()
       }
     }
     
@@ -53,6 +50,28 @@ export default function Club(){
       .catch(e => {
         console.error('Fehler beim Laden des Sponsors:', e)
         setLoading(false)
+      })
+  }
+
+  const loadSponsorOptions = () => {
+    if (!team || !team.id) return
+    
+    fetch(`${API_BASE}/api/sponsors/options/${team.id}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data && data.options) {
+          setSponsorOptions(data.options)
+          console.log('Sponsor-Optionen geladen für Division', data.division, 'mit Multiplikator', data.multiplier)
+        }
+      })
+      .catch(e => {
+        console.error('Fehler beim Laden der Sponsor-Optionen:', e)
+        // Fallback auf Default-Optionen
+        setSponsorOptions([
+          { key:'s1', name:'SportCo', payouts: { appearance:40000, win:100000, survive:4000000, title:15000000 } },
+          { key:'s2', name:'MegaCorp', payouts: { appearance:70000, win:20000, survive:7000000, title:12000000 } },
+          { key:'s3', name:'LocalBank', payouts: { appearance:120000, win:100000, survive:1000000, title:5000000 } },
+        ])
       })
   }
 
@@ -104,6 +123,7 @@ export default function Club(){
       const categories = {
         'attendance': '🎫 Zuschauereinnahmen',
         'sponsors': '🤝 Sponsoren',
+        'competition': '🏆 Wettbewerbsprämien',
         'salaries': '👥 Spielergehälter',
         'infrastructure': '🏗️ Infrastruktur',
         'interest': '💸 Zinsen',
@@ -310,7 +330,7 @@ export default function Club(){
           <div>
             <div className="card">
               <h4>Kontostand</h4>
-              <div style={{fontSize:'1.3em', fontWeight:'bold', color:'#4ade80', marginBottom:16}}>
+              <div style={{fontSize:'1.3em', fontWeight:'bold', color: balance >= 0 ? '#4ade80' : '#ef4444', marginBottom:16}}>
                 €{balance.toLocaleString()}
               </div>
 

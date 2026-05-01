@@ -10,6 +10,9 @@ public class LeagueStatisticsDTO {
 	private List<CleanSheetDTO> cleanSheets;
 	private List<PlayerStatisticsDTO> mostYellowCards;
 	private List<PlayerStatisticsDTO> mostRedCards;
+	private List<PlayerStatisticsDTO> topAssisters; // Neue Vorlagen-Statistik
+	private int totalScorers; // Gesamtzahl Torschützen für Pagination
+	private int totalAssisters; // Gesamtzahl Vorlagengeber für Pagination
 
 	public LeagueStatisticsDTO() {
 	}
@@ -52,5 +55,29 @@ public class LeagueStatisticsDTO {
 
 	public void setMostRedCards(List<PlayerStatisticsDTO> mostRedCards) {
 		this.mostRedCards = mostRedCards;
+	}
+
+	public List<PlayerStatisticsDTO> getTopAssisters() {
+		return topAssisters;
+	}
+
+	public void setTopAssisters(List<PlayerStatisticsDTO> topAssisters) {
+		this.topAssisters = topAssisters;
+	}
+
+	public int getTotalScorers() {
+		return totalScorers;
+	}
+
+	public void setTotalScorers(int totalScorers) {
+		this.totalScorers = totalScorers;
+	}
+
+	public int getTotalAssisters() {
+		return totalAssisters;
+	}
+
+	public void setTotalAssisters(int totalAssisters) {
+		this.totalAssisters = totalAssisters;
 	}
 }

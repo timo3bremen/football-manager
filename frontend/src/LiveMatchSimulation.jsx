@@ -56,10 +56,10 @@ export default function LiveMatchSimulation({ token, teamId }) {
 				const now = new Date();
 				const secondsElapsed = Math.floor((now - startTime) / 1000);
 				
-				// Prüfe ob noch innerhalb der 270 Sekunden
-				if (secondsElapsed <= 270) {
-					const secondsRemaining = Math.max(0, 270 - secondsElapsed);
-					const currentMinute = Math.floor((secondsElapsed / 3) % 91);
+				// Prüfe ob noch innerhalb der 27 Sekunden (10x schneller)
+				if (secondsElapsed <= 27) {
+					const secondsRemaining = Math.max(0, 27 - secondsElapsed);
+					const currentMinute = Math.floor((secondsElapsed / 0.3) % 91);
 					
 					setStatus({
 						isRunning: true,
@@ -67,12 +67,12 @@ export default function LiveMatchSimulation({ token, teamId }) {
 						currentMinute,
 						secondsRemaining,
 						startTime: startTime.toISOString(),
-						expectedEndTime: new Date(startTime.getTime() + 270000).toISOString(),
-						totalDurationSeconds: 270
+						expectedEndTime: new Date(startTime.getTime() + 27000).toISOString(),
+						totalDurationSeconds: 27
 					});
 					console.log('✅ Status wiederhergestellt: Minute', currentMinute, 'von 90');
 				} else {
-					console.log('ℹ️ Simulation ist vorbei (>270 Sekunden verstrichen)');
+					console.log('ℹ️ Simulation ist vorbei (>27 Sekunden verstrichen)');
 					setSimulationStarted(false);
 				}
 			} catch (e) {
@@ -163,10 +163,31 @@ export default function LiveMatchSimulation({ token, teamId }) {
 							sessionStorage.removeItem('simulationStartTime');
 							
 							// Trigger teamUpdated event um Finanzen und Balance neu zu laden
+							// Mehrfach mit Verzögerung, um sicherzustellen dass es ankommt
 							console.log('💰 Triggere teamUpdated Event um Finanzen neu zu laden');
 							window.dispatchEvent(new CustomEvent('teamUpdated'));
 							
+							// Nochmal nach 500ms
+							setTimeout(() => {
+								console.log('💰 Trigger teamUpdated erneut (500ms Verzögerung)');
+								window.dispatchEvent(new CustomEvent('teamUpdated'));
+							}, 500);
+							
+							// Und nochmal nach 1500ms zur Sicherheit
+							setTimeout(() => {
+								console.log('💰 Trigger teamUpdated final (1500ms Verzögerung)');
+								window.dispatchEvent(new CustomEvent('teamUpdated'));
+							}, 1500);
+							
 							return; // Nicht als normales Event behandeln
+						}
+						
+						// Wenn match_start Event empfangen wird, starte frisch
+						if (event.type === 'match_start') {
+							console.log('🔔 Match Start empfangen, starte Event-Liste frisch');
+							eventsRef.current = [event];
+							setEvents([event]);
+							return;
 						}
 						
 						// Speichere in Ref um Events persistent zu halten
@@ -330,7 +351,14 @@ export default function LiveMatchSimulation({ token, teamId }) {
 	// Lade gespeicherte Nachrichten von der DB wenn ein Match vorhanden ist
 	useEffect(() => {
 		const loadSavedMessages = async () => {
-			if (!userMatch || !token || events.length > 0) return;
+			if (!userMatch || !token) return;
+			
+			// Prüfe ob bereits Nachrichten geladen wurden (aber nicht aus SessionStorage)
+			const hasLoadedFromDB = sessionStorage.getItem('messagesLoadedFromDB_' + userMatch.id);
+			if (hasLoadedFromDB && events.length > 0) {
+				console.log('ℹ️ Nachrichten bereits aus DB geladen');
+				return;
+			}
 			
 			try {
 				console.log('🔄 Versuche gespeicherte Nachrichten für Match ' + userMatch.id + ' zu laden');
@@ -346,6 +374,9 @@ export default function LiveMatchSimulation({ token, teamId }) {
 						setEvents(messages);
 						// Speichere auch in SessionStorage
 						sessionStorage.setItem('liveMatchEvents', JSON.stringify(messages));
+						sessionStorage.setItem('messagesLoadedFromDB_' + userMatch.id, 'true');
+					} else {
+						console.log('ℹ️ Keine gespeicherten Nachrichten gefunden');
 					}
 				}
 			} catch (err) {
@@ -372,6 +403,9 @@ export default function LiveMatchSimulation({ token, teamId }) {
 				const data = await res.json();
 				setNotification(data.message);
 				
+				// NICHT mehr Events löschen - das Backend löscht alte Nachrichten
+				// Events werden über WebSocket frisch empfangen
+				
 				// Setze lokalen Flag und Status
 				const startTime = new Date();
 				setSimulationStarted(true);
@@ -382,34 +416,14 @@ export default function LiveMatchSimulation({ token, teamId }) {
 				setStatus({
 					isRunning: true,
 					currentMinute: 0,
-					secondsRemaining: 270,
+					secondsRemaining: 27,
 					startTime: startTime.toISOString(),
-					expectedEndTime: new Date(startTime.getTime() + 270000).toISOString(),
-					totalDurationSeconds: 270
+					expectedEndTime: new Date(startTime.getTime() + 27000).toISOString(),
+					totalDurationSeconds: 27
 				});
 				
-				// Erstelle Anpfiff-Event mit Teamnamen
-				if (userMatch) {
-					const homeTeamName = userMatch.homeTeamName || 'Heimteam';
-					const awayTeamName = userMatch.awayTeamName || 'Auswärtsteam';
-					const anpfiffEvent = {
-						matchId: userMatch.id,
-						type: 'match_start',
-						minute: 0,
-						teamName: '',
-						playerName: '',
-						description: `🔔 Anpfiff: ${homeTeamName} vs ${awayTeamName}`,
-						homeGoals: 0,
-						awayGoals: 0
-					};
-					// Speichere in Ref UND SessionStorage SOFORT
-					eventsRef.current = [anpfiffEvent];
-					const eventsArray = [anpfiffEvent];
-					sessionStorage.setItem('liveMatchEvents', JSON.stringify(eventsArray));
-					console.log('🔔 Anpfiff Event erstellt und in SessionStorage gespeichert');
-					// Setze State danach
-					setEvents(eventsArray);
-				}
+				// NICHT mehr manuell Anpfiff-Event erstellen - das Backend macht das und inkludiert Zuschauerzahl!
+				// Events werden über WebSocket empfangen
 				
 				// Auto-clear notification nach 3 Sekunden
 				setTimeout(() => setNotification(null), 3000);
@@ -430,6 +444,8 @@ export default function LiveMatchSimulation({ token, teamId }) {
 		switch (type) {
 			case 'goal': return '⚽';
 			case 'chance': return '💥';
+			case 'action': return '⚡'; // Allgemeine Spielaktionen
+			case 'error': return '⚠️'; // Fehler
 			case 'yellow_card': return '🟨';
 			case 'red_card': return '🟥';
 			case 'injury': return '🚑';
@@ -446,6 +462,8 @@ export default function LiveMatchSimulation({ token, teamId }) {
 		switch (type) {
 			case 'goal': return '#4CAF50';
 			case 'chance': return '#FFC107';
+			case 'action': return '#2196F3'; // Blau für Aktionen
+			case 'error': return '#FF9800'; // Orange für Fehler
 			case 'yellow_card': return '#FFD700';
 			case 'red_card': return '#F44336';
 			case 'injury': return '#FF5722';

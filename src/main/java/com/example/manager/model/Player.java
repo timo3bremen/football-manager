@@ -26,6 +26,10 @@ public class Player {
 	@Column(name = "onTransferList", columnDefinition = "BOOLEAN DEFAULT FALSE")
 	private boolean onTransferList = false;
 
+	// Status: Spieler ist freier Agent? (kein Verein, kein Ablösegeld)
+	@Column(name = "isFreeAgent", columnDefinition = "BOOLEAN DEFAULT FALSE")
+	private boolean isFreeAgent = false;
+
 	private String name;
 
 	// Fähigkeiten (1-100)
@@ -157,6 +161,14 @@ public class Player {
 
 	public void setOnTransferList(boolean onTransferList) {
 		this.onTransferList = onTransferList;
+	}
+
+	public boolean isFreeAgent() {
+		return isFreeAgent;
+	}
+
+	public void setFreeAgent(boolean freeAgent) {
+		isFreeAgent = freeAgent;
 	}
 
 	public String getName() {
@@ -479,11 +491,20 @@ public class Player {
 	}
 
 	/**
-	 * Berechnet den Marktwert basierend auf Alter, Rating und Vertragslaufzeit.
-	 * Formel: Base = Rating * 100000 AgeMultiplier = 2.0 - (Age / 35) (jünger =
-	 * besser, max 2.0 bei Age 0, min 1.0 bei Age 35+) ContractMultiplier = 0.5 +
-	 * (ContractLength / 10) (länger = besser, min 0.5, max 1.5) MarketValue = Base
-	 * * AgeMultiplier * ContractMultiplier
+	 * Berechnet den Marktwert basierend auf Rating, Alter und Vertragslaufzeit
+	 * REALISTISCHE FORMEL mit höheren Werten ab Rating 75+:
+	 * Rating 50: ~150K
+	 * Rating 60: ~500K
+	 * Rating 70: ~1.5M
+	 * Rating 75: ~3M
+	 * Rating 80: ~6M
+	 * Rating 85: ~12M
+	 * Rating 90: ~22M
+	 * Rating 95: ~40M
+	 * 
+	 * Multiplikatoren:
+	 * - Alter (1.0 - 2.5): Jüngere Spieler deutlich wertvoller
+	 * - Vertrag (1.0 - 2.0): Längere Verträge wertvoller
 	 */
 	public void calculateMarketValue() {
 		if (rating <= 0) {
@@ -491,56 +512,181 @@ public class Player {
 			return;
 		}
 
-		// Angepasst: rating^3.5 * 0.8 für höhere Exponentialität
-		// Rating 40: 100K
-		// Rating 50: 559K
-		// Rating 60: 1.49M
-		// Rating 70: 3.98M
-		// Rating 80: 12.1M
-		// Rating 90: 34.5M
-		long baseValue = (long) (Math.pow(rating, 3.5) * 0.8);
+		// Base Value: Detaillierte Tabelle für jedes Rating (40-99)
+		// Moderate Progression ohne extreme Sprünge
+		long baseValue;
+		switch (rating) {
+		case 40: baseValue = 50_000; break;
+		case 41: baseValue = 60_000; break;
+		case 42: baseValue = 70_000; break;
+		case 43: baseValue = 80_000; break;
+		case 44: baseValue = 90_000; break;
+		case 45: baseValue = 100_000; break;
+		case 46: baseValue = 115_000; break;
+		case 47: baseValue = 130_000; break;
+		case 48: baseValue = 145_000; break;
+		case 49: baseValue = 160_000; break;
+		case 50: baseValue = 180_000; break;
+		case 51: baseValue = 200_000; break;
+		case 52: baseValue = 220_000; break;
+		case 53: baseValue = 245_000; break;
+		case 54: baseValue = 270_000; break;
+		case 55: baseValue = 300_000; break;
+		case 56: baseValue = 330_000; break;
+		case 57: baseValue = 365_000; break;
+		case 58: baseValue = 400_000; break;
+		case 59: baseValue = 440_000; break;
+		case 60: baseValue = 480_000; break;
+		case 61: baseValue = 525_000; break;
+		case 62: baseValue = 575_000; break;
+		case 63: baseValue = 625_000; break;
+		case 64: baseValue = 680_000; break;
+		case 65: baseValue = 740_000; break;
+		case 66: baseValue = 805_000; break;
+		case 67: baseValue = 875_000; break;
+		case 68: baseValue = 950_000; break;
+		case 69: baseValue = 1_030_000; break;
+		case 70: baseValue = 1_120_000; break;
+		case 71: baseValue = 1_220_000; break;
+		case 72: baseValue = 1_330_000; break;
+		case 73: baseValue = 1_450_000; break;
+		case 74: baseValue = 1_580_000; break;
+		case 75: baseValue = 1_720_000; break;
+		case 76: baseValue = 1_870_000; break;
+		case 77: baseValue = 2_030_000; break;
+		case 78: baseValue = 2_200_000; break;
+		case 79: baseValue = 2_390_000; break;
+		case 80: baseValue = 2_590_000; break;
+		case 81: baseValue = 2_810_000; break;
+		case 82: baseValue = 3_050_000; break;
+		case 83: baseValue = 3_310_000; break;
+		case 84: baseValue = 3_590_000; break;
+		case 85: baseValue = 3_900_000; break;
+		case 86: baseValue = 4_240_000; break;
+		case 87: baseValue = 4_610_000; break;
+		case 88: baseValue = 5_020_000; break;
+		case 89: baseValue = 5_470_000; break;
+		case 90: baseValue = 5_970_000; break;
+		case 91: baseValue = 6_520_000; break;
+		case 92: baseValue = 7_130_000; break;
+		case 93: baseValue = 7_800_000; break;
+		case 94: baseValue = 8_540_000; break;
+		case 95: baseValue = 9_360_000; break;
+		case 96: baseValue = 10_270_000; break;
+		case 97: baseValue = 11_280_000; break;
+		case 98: baseValue = 12_400_000; break;
+		case 99: baseValue = 13_650_000; break;
+		default:
+			// Falls außerhalb 40-99: Berechne dynamisch
+			if (rating < 40) {
+				baseValue = 30_000;
+			} else {
+				baseValue = 13_650_000; // Max für 99+
+			}
+			break;
+		}
 
-		// Age multiplier: Jüngere Spieler sind mehr wert
-		// age 18 -> 3.0, age 24 -> 2.0, age 28 -> 1.5, age 32 -> 1.0
+		// Age multiplier: Jüngere Spieler sind wertvoller
+		// 16 Jahre = Maximum (3.5x), 36 Jahre = Minimum (0.2x)
+		// Linearer Abstieg von 16 bis 36
 		double ageMultiplier;
-		if (age <= 18) {
+		switch (age) {
+		case 16:
+			ageMultiplier = 3.5; // Jüngstes Talent - MAXIMUM
+			break;
+		case 17:
+			ageMultiplier = 3.4;
+			break;
+		case 18:
+			ageMultiplier = 3.3;
+			break;
+		case 19:
+			ageMultiplier = 3.2;
+			break;
+		case 20:
+			ageMultiplier = 3.1;
+			break;
+		case 21:
 			ageMultiplier = 3.0;
-		} else if (age <= 24) {
-			// linear from 3.0 at 18 down to 2.0 at 24
-			ageMultiplier = 3.0 - ((age - 18) * (1.0 / 6.0));
-		} else if (age <= 28) {
-			// linear from 2.0 at 24 down to 1.5 at 28
-			ageMultiplier = 2.0 - ((age - 24) * (0.5 / 4.0));
-		} else if (age <= 32) {
-			// linear from 1.5 at 28 down to 1.0 at 32
-			ageMultiplier = 1.5 - ((age - 28) * (0.5 / 4.0));
-		} else {
-			ageMultiplier = 1.0;
+			break;
+		case 22:
+			ageMultiplier = 2.9;
+			break;
+		case 23:
+			ageMultiplier = 2.8;
+			break;
+		case 24:
+			ageMultiplier = 2.7;
+			break;
+		case 25:
+			ageMultiplier = 2.5;
+			break;
+		case 26:
+			ageMultiplier = 2.3;
+			break;
+		case 27:
+			ageMultiplier = 2.1;
+			break;
+		case 28:
+			ageMultiplier = 1.9;
+			break;
+		case 29:
+			ageMultiplier = 1.7;
+			break;
+		case 30:
+			ageMultiplier = 1.5;
+			break;
+		case 31:
+			ageMultiplier = 1.3;
+			break;
+		case 32:
+			ageMultiplier = 1.1;
+			break;
+		case 33:
+			ageMultiplier = 0.9;
+			break;
+		case 34:
+			ageMultiplier = 0.7;
+			break;
+		case 35:
+			ageMultiplier = 0.5;
+			break;
+		case 36:
+			ageMultiplier = 0.2; // Fast Karriereende - MINIMUM
+			break;
+		default:
+			// Jünger als 16 oder älter als 36
+			if (age < 16) {
+				ageMultiplier = 3.5; // Sehr jung (wie 16)
+			} else {
+				ageMultiplier = 0.1; // Sehr alt (37+)
+			}
+			break;
 		}
 
 		// Contract multiplier: Längere Verträge sind besser
 		// contractLength ist in Saisons (1-5)
 		// contractLength 1 = 1.0
-		// contractLength 2 = 1.7
-		// contractLength 3 = 2.5
-		// contractLength 4 = 3.2
-		// contractLength 5 = 4.0
+		// contractLength 2 = 1.25
+		// contractLength 3 = 1.5
+		// contractLength 4 = 1.75
+		// contractLength 5 = 2.0
 		double contractMultiplier;
 		switch (contractLength) {
 		case 1:
 			contractMultiplier = 1.0;
 			break;
 		case 2:
-			contractMultiplier = 1.7;
+			contractMultiplier = 1.25;
 			break;
 		case 3:
-			contractMultiplier = 2.5;
+			contractMultiplier = 1.5;
 			break;
 		case 4:
-			contractMultiplier = 3.2;
+			contractMultiplier = 1.75;
 			break;
 		case 5:
-			contractMultiplier = 4.0;
+			contractMultiplier = 2.0;
 			break;
 		default:
 			contractMultiplier = 1.0;

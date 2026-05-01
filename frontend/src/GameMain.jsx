@@ -5,6 +5,7 @@ import Club from './Club'
 import Schedule from './Schedule'
 import Options from './Options'
 import TransferMarket from './TransferMarket'
+import History from './History'
 import LiveMatchSimulation from './LiveMatchSimulation'
 import { useGame } from './GameContext'
 
@@ -39,14 +40,15 @@ export default function GameMain(){
         </div>
       </div>
 
-      <div className="card">
-       <div className="menu">
+       <div className="card">
+        <div className="menu">
            <button className={tab==='team'? 'active':''} onClick={()=>setTab('team')}>Team</button>
            <button className={tab==='infrastructure'? 'active':''} onClick={()=>setTab('infrastructure')}>Infrastruktur</button>
            <button className={tab==='club'? 'active':''} onClick={()=>setTab('club')}>Verein</button>
            <button className={tab==='schedule'? 'active':''} onClick={()=>setTab('schedule')}>Spielplan</button>
            <button className={tab==='live-simulation'? 'active':''} onClick={()=>setTab('live-simulation')}>🔴 Live</button>
            <button className={tab==='transfer-market'? 'active':''} onClick={()=>setTab('transfer-market')}>Transfermarkt</button>
+           <button className={tab==='history'? 'active':''} onClick={()=>setTab('history')}>Geschichte</button>
            <button className={tab==='options'? 'active':''} onClick={()=>setTab('options')}>Optionen</button>
          </div>
 
@@ -57,6 +59,7 @@ export default function GameMain(){
            {tab === 'schedule' && <Schedule />}
            {tab === 'live-simulation' && <LiveMatchSimulation token={token} teamId={team?.id} />}
            {tab === 'transfer-market' && <TransferMarket />}
+           {tab === 'history' && <History />}
            {tab === 'options' && <Options />}
          </div>
       </div>

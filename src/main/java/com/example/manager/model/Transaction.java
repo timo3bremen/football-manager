@@ -27,7 +27,7 @@ public class Transaction {
     private String description;
 
     @Column(name = "category")
-    private String category; // 'attendance', 'sponsors', 'salaries', 'infrastructure', 'interest', 'transfers'
+    private String category; // 'attendance', 'sponsors', 'competition', 'salaries', 'infrastructure', 'interest', 'transfers'
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
