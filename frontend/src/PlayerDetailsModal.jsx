@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { API_BASE } from './api.config'
+
+const API_BASE = 'http://192.168.178.21:8080'
 
 export default function PlayerDetailsModal({ playerId, onClose }) {
   const [playerStats, setPlayerStats] = useState(null)

@@ -17,10 +17,21 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(Arrays.asList("http://localhost:5173", "http://localhost:3000", "http://192.168.178.21:5173"));
+        
+        // Allow all origins for development/testing
+        // For production, replace with specific origins or read from environment variable
+        configuration.setAllowedOrigins(Arrays.asList("*"));
+        
+        // Allow all methods needed for the API
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"));
+        
+        // Allow all headers
         configuration.setAllowedHeaders(Arrays.asList("*"));
-        configuration.setAllowCredentials(true);
+        
+        // Allow credentials (if needed)
+        configuration.setAllowCredentials(false); // Must be false when using "*" for origins
+        
+        // Cache CORS response for 1 hour
         configuration.setMaxAge(3600L);
         
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
