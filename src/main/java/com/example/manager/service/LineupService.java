@@ -59,6 +59,22 @@ public class LineupService {
 					System.out.println("[LineupService] WARNING: Player " + playerId + " does not belong to team " + teamId + "! Skipping this slot.");
 					continue;  // Überspringe, wenn der Spieler nicht zum Team gehört
 				}
+				
+				// === VERLETZUNGS-CHECK ===
+				// Verhindere das Hinzufügen von verletzten oder gesperrten Spielern zur Aufstellung
+				if (player.isInjured()) {
+					System.out.println("[LineupService] ❌ FEHLER: Spieler " + player.getName() + " ist verletzt (" + 
+							player.getInjuryName() + ") und kann nicht zur Aufstellung hinzugefügt werden! " +
+							"Noch " + player.getInjuryMatchdaysRemaining() + " Spieltag(e) Ausfallzeit.");
+					continue;  // Überspringe diesen Spieler
+				}
+				
+				if (player.isSuspended()) {
+					System.out.println("[LineupService] ❌ FEHLER: Spieler " + player.getName() + " ist gesperrt (" + 
+							player.getSuspensionReason() + ") und kann nicht zur Aufstellung hinzugefügt werden! " +
+							"Noch " + player.getSuspensionMatchesRemaining() + " Spiel(e) Sperrung.");
+					continue;  // Überspringe diesen Spieler
+				}
 			}
 
 			LineupSlotId id = new LineupSlotId(teamId, formationId, slotIndex);
@@ -102,6 +118,28 @@ public class LineupService {
 		int slotIndex = 1;
 		for (Map.Entry<String, Long> entry : slotAssignments.entrySet()) {
 			if (entry.getValue() != null) {
+				Long playerId = entry.getValue();
+				
+				// === VERLETZUNGS- UND SPERRUNGSPRÜFUNG ===
+				Player player = playerRepository.findById(playerId).orElse(null);
+				if (player != null) {
+					// Prüfe ob Spieler verletzt ist
+					if (player.isInjured()) {
+						System.out.println("[LineupService] ❌ FEHLER: Spieler " + player.getName() + 
+								" ist verletzt (" + player.getInjuryName() + ") und kann nicht zur Aufstellung hinzugefügt werden! " +
+								"Noch " + player.getInjuryMatchdaysRemaining() + " Spieltag(e) Ausfallzeit.");
+						continue; // Überspringe diesen Spieler
+					}
+					
+					// Prüfe ob Spieler gesperrt ist
+					if (player.isSuspended()) {
+						System.out.println("[LineupService] ❌ FEHLER: Spieler " + player.getName() + 
+								" ist gesperrt (" + player.getSuspensionReason() + ") und kann nicht zur Aufstellung hinzugefügt werden! " +
+								"Noch " + player.getSuspensionMatchesRemaining() + " Spiel(e) Sperrung.");
+						continue; // Überspringe diesen Spieler
+					}
+				}
+				
 				LineupSlotId id = new LineupSlotId(teamId, formationId, slotIndex);
 				LineupSlot slot = lineupRepository.findById(id).orElse(null);
 
@@ -111,10 +149,10 @@ public class LineupService {
 					slot.setFormationId(formationId);
 					slot.setSlotIndex(slotIndex);
 					slot.setSlotName(entry.getKey());
-					slot.setPlayerId(entry.getValue());
+					slot.setPlayerId(playerId);
 				} else {
 					slot.setSlotName(entry.getKey());
-					slot.setPlayerId(entry.getValue());
+					slot.setPlayerId(playerId);
 				}
 
 				lineupRepository.save(slot);
@@ -143,6 +181,28 @@ public class LineupService {
 	 */
 	@Transactional
 	public void swapPlayer(Long teamId, String formationId, int slotIndex, Long newPlayerId) {
+		// === VERLETZUNGS- UND SPERRUNGSPRÜFUNG ===
+		if (newPlayerId != null) {
+			Player player = playerRepository.findById(newPlayerId).orElse(null);
+			if (player != null) {
+				// Prüfe ob Spieler verletzt ist
+				if (player.isInjured()) {
+					System.out.println("[LineupService] ❌ FEHLER: Spieler " + player.getName() + 
+							" ist verletzt (" + player.getInjuryName() + ") und kann nicht zur Aufstellung hinzugefügt werden! " +
+							"Noch " + player.getInjuryMatchdaysRemaining() + " Spieltag(e) Ausfallzeit.");
+					return; // Abbrechen
+				}
+				
+				// Prüfe ob Spieler gesperrt ist
+				if (player.isSuspended()) {
+					System.out.println("[LineupService] ❌ FEHLER: Spieler " + player.getName() + 
+							" ist gesperrt (" + player.getSuspensionReason() + ") und kann nicht zur Aufstellung hinzugefügt werden! " +
+							"Noch " + player.getSuspensionMatchesRemaining() + " Spiel(e) Sperrung.");
+					return; // Abbrechen
+				}
+			}
+		}
+		
 		LineupSlotId id = new LineupSlotId(teamId, formationId, slotIndex);
 
 		LineupSlot slot = lineupRepository.findById(id).orElse(null);

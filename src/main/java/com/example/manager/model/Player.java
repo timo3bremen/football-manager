@@ -93,6 +93,29 @@ public class Player {
 	// contract length in seasons (1-5)
 	private int contractLength;
 
+	// Verletzungen
+	@Column(name = "isInjured", columnDefinition = "BOOLEAN DEFAULT FALSE")
+	private boolean isInjured = false;
+
+	@Column(name = "injuryName")
+	private String injuryName; // z.B. "Prellung im Oberschenkel", "Kreuzbandriss"
+
+	@Column(name = "injuryMatchdaysRemaining")
+	private int injuryMatchdaysRemaining = 0; // Wie viele Spieltage noch verletzt
+
+	@Column(name = "injuryStartMatchday")
+	private int injuryStartMatchday = 0; // Bei welchem Spieltag die Verletzung passiert ist
+
+	// Sperrungen (Rote Karte)
+	@Column(name = "isSuspended", columnDefinition = "BOOLEAN DEFAULT FALSE")
+	private boolean isSuspended = false;
+
+	@Column(name = "suspensionMatchesRemaining")
+	private int suspensionMatchesRemaining = 0; // Wie viele Spiele noch gesperrt
+
+	@Column(name = "suspensionReason")
+	private String suspensionReason; // z.B. "Rote Karte"
+
 	public Player() {
 	}
 
@@ -903,5 +926,110 @@ public class Player {
 		// Berechne Rating und OverallPotential neu
 		calculateRating();
 		calculateOverallPotential();
+	}
+
+	/**
+	 * Verletzung des Spielers eintragen
+	 */
+	public void injure(String injuryName, int matchdaysOut, int currentMatchday) {
+		this.isInjured = true;
+		this.injuryName = injuryName;
+		this.injuryMatchdaysRemaining = matchdaysOut;
+		this.injuryStartMatchday = currentMatchday;
+	}
+
+	/**
+	 * Reduziert Verletzungsdauer um 1 Spieltag
+	 */
+	public void decreaseInjury() {
+		if (isInjured && injuryMatchdaysRemaining > 0) {
+			injuryMatchdaysRemaining--;
+			if (injuryMatchdaysRemaining <= 0) {
+				isInjured = false;
+				injuryName = null;
+				injuryMatchdaysRemaining = 0;
+			}
+		}
+	}
+
+	public boolean isInjured() {
+		return isInjured;
+	}
+
+	public void setInjured(boolean injured) {
+		isInjured = injured;
+	}
+
+	public String getInjuryName() {
+		return injuryName;
+	}
+
+	public void setInjuryName(String injuryName) {
+		this.injuryName = injuryName;
+	}
+
+	public int getInjuryMatchdaysRemaining() {
+		return injuryMatchdaysRemaining;
+	}
+
+	public void setInjuryMatchdaysRemaining(int injuryMatchdaysRemaining) {
+		this.injuryMatchdaysRemaining = injuryMatchdaysRemaining;
+	}
+
+	public int getInjuryStartMatchday() {
+		return injuryStartMatchday;
+	}
+
+	public void setInjuryStartMatchday(int injuryStartMatchday) {
+		this.injuryStartMatchday = injuryStartMatchday;
+	}
+
+	// === SPERRUNGEN (ROTE KARTE) ===
+
+	/**
+	 * Sperrt einen Spieler für eine bestimmte Anzahl von Spielen
+	 */
+	public void suspend(int matchesOut, String reason) {
+		this.isSuspended = true;
+		this.suspensionMatchesRemaining = matchesOut;
+		this.suspensionReason = reason;
+	}
+
+	/**
+	 * Reduziert Sperrung um 1 Spiel
+	 */
+	public void decreaseSuspension() {
+		if (isSuspended && suspensionMatchesRemaining > 0) {
+			suspensionMatchesRemaining--;
+			if (suspensionMatchesRemaining <= 0) {
+				isSuspended = false;
+				suspensionReason = null;
+				suspensionMatchesRemaining = 0;
+			}
+		}
+	}
+
+	public boolean isSuspended() {
+		return isSuspended;
+	}
+
+	public void setSuspended(boolean suspended) {
+		isSuspended = suspended;
+	}
+
+	public int getSuspensionMatchesRemaining() {
+		return suspensionMatchesRemaining;
+	}
+
+	public void setSuspensionMatchesRemaining(int suspensionMatchesRemaining) {
+		this.suspensionMatchesRemaining = suspensionMatchesRemaining;
+	}
+
+	public String getSuspensionReason() {
+		return suspensionReason;
+	}
+
+	public void setSuspensionReason(String suspensionReason) {
+		this.suspensionReason = suspensionReason;
 	}
 }

@@ -50,6 +50,16 @@ export default function TeamPage(){
     const player = roster.find(r => r.id === playerId)
     if (!player) return
 
+    if (player.isInjured) {
+      alert(`${player.name} ist verletzt und kann nicht spielen! (${player.injuryMatchdaysRemaining} Tage ausfallzeit)`)
+      return
+    }
+
+    if (player.isSuspended) {
+      alert(`${player.name} ist gesperrt und kann nicht spielen! (${player.suspensionMatchesRemaining} Spiele Sperrung)`)
+      return
+    }
+
     const freeSlot = findFirstFreeSlot(player.position)
     if (freeSlot) {
       assignPlayerToSlot(freeSlot, playerId)
@@ -97,6 +107,19 @@ export default function TeamPage(){
       
       // Validiere die Position
       if (!player) return
+      
+      // Prüfe ob Spieler gesperrt ist
+      if (player.isSuspended) {
+        alert(`${player.name} ist gesperrt und kann nicht spielen! (${player.suspensionMatchesRemaining} Spiele Sperrung)`)
+        return
+      }
+      
+      // Prüfe ob Spieler verletzt ist
+      if (player.isInjured) {
+        alert(`${player.name} ist verletzt und kann nicht spielen! (${player.injuryMatchdaysRemaining} Tage ausfallzeit)`)
+        return
+      }
+      
       const allowedPosition = getSlotPosition(slotId)
       if (allowedPosition && player.position !== allowedPosition) {
         alert(`Nur ${allowedPosition} Spieler können auf dieser Position eingesetzt werden!`)
@@ -185,9 +208,21 @@ export default function TeamPage(){
                             style={{ cursor: player ? 'pointer' : 'default' }}
                           >
                             {player ? (
-                              <div style={{width:'100%',height:'100%',display:'flex',flexDirection:'column',justifyContent:'space-between',padding:'4px'}}>
+                              <div style={{width:'100%',height:'100%',display:'flex',flexDirection:'column',justifyContent:'space-between',padding:'4px', opacity: (player.isInjured || player.isSuspended) ? 0.6 : 1, backgroundColor: player.isSuspended ? 'rgba(239, 68, 68, 0.2)' : player.isInjured ? 'rgba(239, 68, 68, 0.1)' : 'transparent', borderRadius: '4px'}}>
                                 <div>
-                                  <div style={{fontSize:'0.85em',fontWeight:'bold'}}>{player.name}</div>
+                                  <div style={{fontSize:'0.85em',fontWeight:'bold'}}>
+                                    {player.isSuspended ? '🟥 ' : player.isInjured ? '🤕 ' : ''}{player.name}
+                                  </div>
+                                  {player.isSuspended && (
+                                    <div style={{fontSize:'0.65em', color:'#ef4444', marginTop: '2px'}}>
+                                      {player.suspensionMatchesRemaining}S gesperrt
+                                    </div>
+                                  )}
+                                  {player.isInjured && (
+                                    <div style={{fontSize:'0.65em', color:'#ef4444', marginTop: '2px'}}>
+                                      {player.injuryMatchdaysRemaining} Tage
+                                    </div>
+                                  )}
                                   <div className="draggable-hint" style={{fontSize:'0.7em'}}>{player.position} • {player.age || '?'}J</div>
                                   <div style={{fontSize:'0.7em',color:'#fbbf24',marginTop:2}}>⭐ {player.rating}</div>
                                 </div>
@@ -243,23 +278,36 @@ export default function TeamPage(){
                       <li 
                         key={p.id} 
                         className="roster-item" 
-                        draggable 
+                        draggable={!p.isInjured}
                         onDragStart={(e)=>onDragStartFromRoster(e,p.id)}
                         onClick={() => setSelectedPlayerId(p.id)}
                         style={{
-                          backgroundColor: inLineup ? 'rgba(52, 211, 153, 0.2)' : 'transparent',
-                          borderLeft: inLineup ? '3px solid #10b981' : '3px solid transparent',
+                          backgroundColor: p.isInjured ? 'rgba(239, 68, 68, 0.3)' : inLineup ? 'rgba(52, 211, 153, 0.2)' : 'transparent',
+                          borderLeft: p.isInjured ? '3px solid #ef4444' : inLineup ? '3px solid #10b981' : '3px solid transparent',
                           display: 'flex',
                           justifyContent: 'space-between',
                           alignItems: 'center',
-                          cursor: 'pointer'
+                          cursor: p.isInjured ? 'not-allowed' : 'pointer',
+                          opacity: p.isInjured ? 0.7 : 1
                         }}
                       >
                         <div style={{flex:1}}>
                           <div style={{fontWeight: inLineup ? 'bold' : 'normal', color: inLineup ? '#10b981' : 'inherit'}}>
-                            {p.name} {inLineup ? '✓' : ''}
+                            {p.isSuspended ? '🟥 ' : p.isInjured ? '🤕 ' : ''}{p.name} {inLineup ? '✓' : ''}
+                            {p.isSuspended && <span style={{color: '#ef4444', fontSize: '0.8em', marginLeft: '4px'}}>({p.suspensionMatchesRemaining}S)</span>}
+                            {p.isInjured && <span style={{color: '#ef4444', fontSize: '0.8em', marginLeft: '4px'}}>({p.injuryMatchdaysRemaining}T)</span>}
                           </div>
                           <div style={{fontSize: '0.85em', color:'var(--muted)'}}>{p.position} • {p.age || '?'} Jahre • {p.country}</div>
+                          {p.isSuspended && (
+                            <div style={{fontSize: '0.75em', color: '#ef4444', marginTop: '2px'}}>
+                              Gesperrt: {p.suspensionReason || 'Unbekannter Grund'}
+                            </div>
+                          )}
+                          {p.isInjured && (
+                            <div style={{fontSize: '0.75em', color: '#ef4444', marginTop: '2px'}}>
+                              Verletzt: {p.injuryName}
+                            </div>
+                          )}
                           <div style={{fontSize: '0.8em', color:'#fbbf24',marginTop:2}}>⭐ Rating: {p.rating}</div>
                           
                           {/* Fitness Bar im Roster */}
@@ -298,18 +346,21 @@ export default function TeamPage(){
                               e.stopPropagation()
                               addPlayerToLineup(p.id)
                             }}
+                            disabled={p.isInjured || p.isSuspended}
                             style={{
                               marginLeft: 12,
                               padding: '4px 12px',
                               borderRadius: 4,
                               border: 'none',
-                              background: '#6366f1',
+                              background: (p.isInjured || p.isSuspended) ? '#9ca3af' : '#6366f1',
                               color: '#fff',
-                              cursor: 'pointer',
+                              cursor: (p.isInjured || p.isSuspended) ? 'not-allowed' : 'pointer',
                               fontSize: '0.8em',
                               whiteSpace: 'nowrap',
-                              flexShrink: 0
+                              flexShrink: 0,
+                              opacity: (p.isInjured || p.isSuspended) ? 0.6 : 1
                             }}
+                            title={p.isInjured ? 'Spieler ist verletzt' : p.isSuspended ? 'Spieler ist gesperrt' : ''}
                           >
                             ➕ Aufstellung
                           </button>

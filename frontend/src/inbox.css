@@ -1,0 +1,368 @@
+/* Inbox / Postfach Styling */
+
+.inbox-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 16px;
+}
+
+.inbox-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inbox-header h2 {
+  margin: 0;
+  font-size: 20px;
+  color: #e6eef6;
+}
+
+.inbox-badge {
+  background: #ef4444;
+  color: white;
+  border-radius: 12px;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  min-width: 20px;
+  text-align: center;
+}
+
+.inbox-filter-bar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.inbox-filter-btn {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: transparent;
+  color: #cbd5e1;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.inbox-filter-btn:hover {
+  border-color: rgba(255,255,255,0.2);
+  background: rgba(255,255,255,0.05);
+}
+
+.inbox-filter-btn.active {
+  background: linear-gradient(90deg, #06b6d4, #7c3aed);
+  color: #022;
+  border: none;
+}
+
+.inbox-layout {
+  display: flex;
+  gap: 16px;
+  flex: 1;
+  min-height: 600px;
+}
+
+/* Message List */
+.inbox-message-list {
+  flex: 0 0 320px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.04);
+  border-radius: 10px;
+  padding: 12px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.inbox-message-item {
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.04);
+  background: rgba(255,255,255,0.01);
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.inbox-message-item:hover {
+  background: rgba(255,255,255,0.03);
+  border-color: rgba(255,255,255,0.08);
+}
+
+.inbox-message-item.active {
+  background: linear-gradient(135deg, rgba(6,182,212,0.1), rgba(124,58,237,0.1));
+  border: 1px solid rgba(6,182,212,0.3);
+  box-shadow: 0 0 10px rgba(6,182,212,0.2);
+}
+
+.inbox-message-item.unread {
+  border-left: 3px solid #06b6d4;
+}
+
+.inbox-message-item-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inbox-message-icon {
+  font-size: 16px;
+}
+
+.inbox-message-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e6eef6;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-message-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.inbox-message-sender {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.inbox-message-time {
+  font-size: 10px;
+  color: #64748b;
+}
+
+.inbox-loading-text,
+.inbox-empty-text {
+  text-align: center;
+  color: #94a3b8;
+  padding: 20px;
+  font-size: 13px;
+}
+
+/* Message Content */
+.inbox-message-content {
+  flex: 1;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.04);
+  border-radius: 10px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.inbox-content-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+
+.inbox-content-title {
+  font-size: 18px;
+  margin: 0 0 8px 0;
+  color: #e6eef6;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inbox-type-icon {
+  font-size: 20px;
+}
+
+.inbox-content-meta {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: #94a3b8;
+  flex-wrap: wrap;
+}
+
+.inbox-content-sender,
+.inbox-content-type,
+.inbox-content-date {
+  padding: 4px 8px;
+  background: rgba(255,255,255,0.05);
+  border-radius: 4px;
+}
+
+.inbox-content-sender {
+  background: rgba(6,182,212,0.1);
+}
+
+.inbox-content-type {
+  background: rgba(124,58,237,0.1);
+}
+
+.inbox-delete-btn {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 16px;
+  transition: all 0.2s;
+  color: #e6eef6;
+}
+
+.inbox-delete-btn:hover {
+  border-color: #ef4444;
+  color: #ef4444;
+  background: rgba(239,68,68,0.1);
+}
+
+.inbox-content-body {
+  flex: 1;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #cbd5e1;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.inbox-no-selection {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #94a3b8;
+  font-size: 14px;
+}
+
+/* Mobile Responsive */
+@media (max-width: 768px) {
+  .inbox-container {
+    gap: 12px;
+  }
+
+  .inbox-filter-bar {
+    gap: 6px;
+  }
+
+  .inbox-filter-btn {
+    padding: 5px 10px;
+    font-size: 11px;
+  }
+
+  .inbox-layout {
+    flex-direction: column;
+    min-height: auto;
+    gap: 12px;
+  }
+
+  .inbox-message-list {
+    flex: 0 0 120px;
+    padding: 8px;
+  }
+
+  .inbox-message-item {
+    padding: 8px;
+    gap: 4px;
+  }
+
+  .inbox-message-title {
+    font-size: 12px;
+  }
+
+  .inbox-message-sender {
+    font-size: 10px;
+  }
+
+  .inbox-message-time {
+    font-size: 9px;
+  }
+
+  .inbox-message-content {
+    padding: 12px;
+  }
+
+  .inbox-content-title {
+    font-size: 16px;
+  }
+
+  .inbox-content-meta {
+    font-size: 11px;
+    gap: 8px;
+  }
+
+  .inbox-content-body {
+    font-size: 13px;
+  }
+
+  .inbox-content-sender,
+  .inbox-content-type,
+  .inbox-content-date {
+    padding: 3px 6px;
+    font-size: 10px;
+  }
+}
+
+@media (max-width: 480px) {
+  .inbox-container {
+    gap: 8px;
+  }
+
+  .inbox-header h2 {
+    font-size: 16px;
+  }
+
+  .inbox-filter-bar {
+    gap: 4px;
+  }
+
+  .inbox-filter-btn {
+    padding: 4px 8px;
+    font-size: 10px;
+  }
+
+  .inbox-message-list {
+    flex: 0 0 100px;
+    padding: 6px;
+  }
+
+  .inbox-message-item {
+    padding: 6px;
+    gap: 3px;
+  }
+
+  .inbox-message-title {
+    font-size: 11px;
+  }
+
+  .inbox-message-content {
+    padding: 8px;
+  }
+
+  .inbox-content-title {
+    font-size: 14px;
+  }
+
+  .inbox-content-header {
+    margin-bottom: 12px;
+    padding-bottom: 12px;
+  }
+
+  .inbox-content-meta {
+    font-size: 10px;
+    gap: 4px;
+  }
+
+  .inbox-content-body {
+    font-size: 12px;
+    line-height: 1.5;
+  }
+}

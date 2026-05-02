@@ -7,6 +7,7 @@ import Options from './Options'
 import TransferMarket from './TransferMarket'
 import History from './History'
 import LiveMatchSimulation from './LiveMatchSimulation'
+import Inbox from './Inbox'
 import { useGame } from './GameContext'
 
 export default function GameMain(){
@@ -43,6 +44,7 @@ export default function GameMain(){
        <div className="card">
         <div className="menu">
            <button className={tab==='team'? 'active':''} onClick={()=>setTab('team')}>Team</button>
+           <button className={tab==='inbox'? 'active':''} onClick={()=>setTab('inbox')}>📬 Postfach</button>
            <button className={tab==='infrastructure'? 'active':''} onClick={()=>setTab('infrastructure')}>Infrastruktur</button>
            <button className={tab==='club'? 'active':''} onClick={()=>setTab('club')}>Verein</button>
            <button className={tab==='schedule'? 'active':''} onClick={()=>setTab('schedule')}>Spielplan</button>
@@ -54,6 +56,7 @@ export default function GameMain(){
 
          <div className="panel">
            {tab === 'team' && <TeamPage />}
+           {tab === 'inbox' && <Inbox />}
            {tab === 'infrastructure' && <Infrastructure />}
            {tab === 'club' && <Club />}
            {tab === 'schedule' && <Schedule />}
@@ -66,3 +69,4 @@ export default function GameMain(){
     </div>
   )
 }
+

@@ -12,6 +12,11 @@ public class PlayerLineupDTO {
 	private Integer age;
 	private String country;
 	private Integer fitness; // Fitness des Spielers (0-100)
+	private boolean injured; // Ist der Spieler verletzt?
+	private String injuryName; // Name der Verletzung (z.B. "Prellung im Oberschenkel")
+	private Integer injuryMatchdaysRemaining; // Wie viele Spieltage noch verletzt? (Ausfallszeit)
+	private boolean suspended; // Ist der Spieler gesperrt?
+	private Integer suspensionMatchesRemaining; // Wie viele Spiele noch gesperrt?
 
 	public PlayerLineupDTO(Long playerId, String playerName, String position, int rating, int slotName) {
 		this.playerId = playerId;
@@ -93,5 +98,45 @@ public class PlayerLineupDTO {
 
 	public void setFitness(Integer fitness) {
 		this.fitness = fitness;
+	}
+
+	public boolean isInjured() {
+		return injured;
+	}
+
+	public void setInjured(boolean injured) {
+		this.injured = injured;
+	}
+
+	public String getInjuryName() {
+		return injuryName;
+	}
+
+	public void setInjuryName(String injuryName) {
+		this.injuryName = injuryName;
+	}
+
+	public Integer getInjuryMatchdaysRemaining() {
+		return injuryMatchdaysRemaining;
+	}
+
+	public void setInjuryMatchdaysRemaining(Integer injuryMatchdaysRemaining) {
+		this.injuryMatchdaysRemaining = injuryMatchdaysRemaining;
+	}
+
+	public boolean isSuspended() {
+		return suspended;
+	}
+
+	public void setSuspended(boolean suspended) {
+		this.suspended = suspended;
+	}
+
+	public Integer getSuspensionMatchesRemaining() {
+		return suspensionMatchesRemaining;
+	}
+
+	public void setSuspensionMatchesRemaining(Integer suspensionMatchesRemaining) {
+		this.suspensionMatchesRemaining = suspensionMatchesRemaining;
 	}
 }

@@ -165,6 +165,9 @@ public class RepositoryService {
 	@Autowired
 	private com.example.manager.repository.FreeAgentOfferRepository freeAgentOfferRepository;
 
+	@Autowired
+	private InjuryService injuryService;
+
 	private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 	private final Map<String, String> sessions = new HashMap<>(); // token -> username
 	private final Random random = new Random();
@@ -1174,6 +1177,14 @@ public class RepositoryService {
 							p.getRating(), slot.getSlotIndex());
 					playerDto.setFitness(p.getFitness()); // Setze Fitness
 					playerDto.setAge(p.getAge()); // Setze Alter
+
+					// === VERLETZUNGSINFORMATIONEN ===
+					playerDto.setInjured(p.isInjured());
+					playerDto.setInjuryName(p.getInjuryName());
+					playerDto.setInjuryMatchdaysRemaining(p.getInjuryMatchdaysRemaining());
+					playerDto.setSuspended(p.isSuspended());
+					playerDto.setSuspensionMatchesRemaining(p.getSuspensionMatchesRemaining());
+
 					dto.getLineup().add(playerDto);
 				}
 			}
@@ -1184,6 +1195,14 @@ public class RepositoryService {
 			PlayerLineupDTO playerDto = new PlayerLineupDTO(p.getId(), p.getName(), p.getPosition(), p.getRating(),
 					p.getAge(), p.getCountry());
 			playerDto.setFitness(p.getFitness()); // Setze Fitness
+
+			// === VERLETZUNGSINFORMATIONEN ===
+			playerDto.setInjured(p.isInjured());
+			playerDto.setInjuryName(p.getInjuryName());
+			playerDto.setInjuryMatchdaysRemaining(p.getInjuryMatchdaysRemaining());
+			playerDto.setSuspended(p.isSuspended());
+			playerDto.setSuspensionMatchesRemaining(p.getSuspensionMatchesRemaining());
+
 			dto.getAllPlayers().add(playerDto);
 		}
 
@@ -3191,6 +3210,15 @@ public class RepositoryService {
 		System.out.println("[RepositoryService] ⭐ Verarbeite Freie Spieler Entscheidungen...");
 		processFreeAgentDecisions();
 
+		// === VERLETZUNGSVERARBEITUNG BEIM SPIELTAGWECHSEL ===
+		// Versendet Benachrichtigungen für alle verletzten Spieler mit Diagnose und
+		// Ausfallszeit
+		// Reduziert Ausfallszeit um 1 Tag
+		// Entfernt verletzte Spieler aus der Aufstellung (rot markiert)
+		System.out.println("[RepositoryService] 🏥 Verarbeite Verletzungen beim Spieltagwechsel...");
+		injuryService.processAllTeamInjuriesOnMatchdayChange();
+		injuryService.processAllTeamSuspensionsOnMatchdayChange();
+
 		// Erhöhe Spieltag
 		GameStateTracking tracking = getOrCreateGameStateTracking();
 		int nextMatchday = Math.min(25, currentMatchday + 1);
@@ -3655,79 +3683,80 @@ public class RepositoryService {
 		GameStateTracking tracking = getOrCreateGameStateTracking();
 		int currentSeason = tracking.getCurrentSeason();
 
-	// === SCHRITT 1: SPEICHERE SAISON-HISTORIE ===
-	System.out.println("[RepositoryService] 📚 Speichere Saison " + currentSeason + " Historie...");
-	saveSeasonHistory(currentSeason);
-	saveCupHistory(currentSeason);
+		// === SCHRITT 1: SPEICHERE SAISON-HISTORIE ===
+		System.out.println("[RepositoryService] 📚 Speichere Saison " + currentSeason + " Historie...");
+		saveSeasonHistory(currentSeason);
+		saveCupHistory(currentSeason);
 
-	// === AUTO-VERLÄNGERUNG: Verlängere Verträge mit 1 Saison Restlaufzeit ===
-	// WICHTIG: Muss VOR endSeason() stattfinden, sonst werden Verträge reduziert und die Verlängerung kommt zu spät!
-	// CPU-Teams verlängern automatisch Spielerverträge mit nur noch 1 Saison
-	System.out.println("[RepositoryService] 🔄 Auto-Verlängere Spielerverträge bei CPU-Teams...");
-	cpuTeamAIService.autoRenewExpiringContracts();
-	System.out.println("[RepositoryService] ✅ Verträge auto-verlängert!");
+		// === AUTO-VERLÄNGERUNG: Verlängere Verträge mit 1 Saison Restlaufzeit ===
+		// WICHTIG: Muss VOR endSeason() stattfinden, sonst werden Verträge reduziert
+		// und die Verlängerung kommt zu spät!
+		// CPU-Teams verlängern automatisch Spielerverträge mit nur noch 1 Saison
+		System.out.println("[RepositoryService] 🔄 Auto-Verlängere Spielerverträge bei CPU-Teams...");
+		cpuTeamAIService.autoRenewExpiringContracts();
+		System.out.println("[RepositoryService] ✅ Verträge auto-verlängert!");
 
-	// === SCHRITT 2: Altern aller Spieler und Karriereeenden ===
-	// Rufe endSeason() für alle Teams auf
-	endSeason();
-	System.out.println("[RepositoryService] ✅ Alle Teams haben Saison-Ende verarbeitet");
+		// === SCHRITT 2: Altern aller Spieler und Karriereeenden ===
+		// Rufe endSeason() für alle Teams auf
+		endSeason();
+		System.out.println("[RepositoryService] ✅ Alle Teams haben Saison-Ende verarbeitet");
 
-	// === SPONSOR ENTFERNEN ===
-	// Entferne alle Sponsoren (Boni wurden bereits am Spieltag 22 ausgezahlt)
-	processSeasonEndBonuses();
+		// === SPONSOR ENTFERNEN ===
+		// Entferne alle Sponsoren (Boni wurden bereits am Spieltag 22 ausgezahlt)
+		processSeasonEndBonuses();
 
-	// === FINANZÜBERSICHT ZURÜCKSETZEN ===
-	// Lösche alle Transaktionen für alle Teams
-	System.out.println("[RepositoryService] 💰 Setze Finanzübersicht zurück...");
-	List<Team> allTeams = teamRepository.findAll();
-	for (Team team : allTeams) {
-		transactionRepository.deleteByTeamId(team.getId());
-	}
-	System.out.println("[RepositoryService] ✅ Finanzübersicht für " + allTeams.size() + " Teams zurückgesetzt");
+		// === FINANZÜBERSICHT ZURÜCKSETZEN ===
+		// Lösche alle Transaktionen für alle Teams
+		System.out.println("[RepositoryService] 💰 Setze Finanzübersicht zurück...");
+		List<Team> allTeams = teamRepository.findAll();
+		for (Team team : allTeams) {
+			transactionRepository.deleteByTeamId(team.getId());
+		}
+		System.out.println("[RepositoryService] ✅ Finanzübersicht für " + allTeams.size() + " Teams zurückgesetzt");
 
-	List<League> allLeagues = leagueRepository.findAll();
+		List<League> allLeagues = leagueRepository.findAll();
 
-	// Gruppiere Ligen nach Land
-	Map<String, List<League>> leaguesByCountry = new HashMap<>();
-	for (League league : allLeagues) {
-		String country = league.getCountry() != null ? league.getCountry() : "Unknown";
-		leaguesByCountry.putIfAbsent(country, new ArrayList<>());
-		leaguesByCountry.get(country).add(league);
-	}
+		// Gruppiere Ligen nach Land
+		Map<String, List<League>> leaguesByCountry = new HashMap<>();
+		for (League league : allLeagues) {
+			String country = league.getCountry() != null ? league.getCountry() : "Unknown";
+			leaguesByCountry.putIfAbsent(country, new ArrayList<>());
+			leaguesByCountry.get(country).add(league);
+		}
 
-	// Führe Auf-/Abstieg für jedes Land separat durch
-	for (Map.Entry<String, List<League>> entry : leaguesByCountry.entrySet()) {
-		String country = entry.getKey();
-		List<League> countryLeagues = entry.getValue();
-		System.out.println("[RepositoryService] Führe Auf-/Abstieg für " + country + " durch ("
-				+ countryLeagues.size() + " Ligen)...");
-		resetSeasonForCountry(country, countryLeagues);
-	}
+		// Führe Auf-/Abstieg für jedes Land separat durch
+		for (Map.Entry<String, List<League>> entry : leaguesByCountry.entrySet()) {
+			String country = entry.getKey();
+			List<League> countryLeagues = entry.getValue();
+			System.out.println("[RepositoryService] Führe Auf-/Abstieg für " + country + " durch ("
+					+ countryLeagues.size() + " Ligen)...");
+			resetSeasonForCountry(country, countryLeagues);
+		}
 
 // === ERHÖHE SAISON ===
-tracking.setCurrentSeason(currentSeason + 1);
-gameStateTrackingRepository.save(tracking);
-System.out.println("[RepositoryService] 🎉 Neue Saison " + (currentSeason + 1) + " beginnt!");
+		tracking.setCurrentSeason(currentSeason + 1);
+		gameStateTrackingRepository.save(tracking);
+		System.out.println("[RepositoryService] 🎉 Neue Saison " + (currentSeason + 1) + " beginnt!");
 
 // === INITIALISIERE POKAL FÜR NEUE SAISON ===
 // 64 Teams pro Land: Alle aus Liga 1+2 + Teams aus Liga 3 (Plätze 1-7)
 // Teams auf Plätzen 8-12 aus den vier 3. Ligen werden ausgeschlossen (5×4 = 20
 // Teams)
-System.out.println("[RepositoryService] 🏆 Initialisiere Pokal für neue Saison " + (currentSeason + 1) + "...");
-cupService.initializeAllCupTournaments(currentSeason + 1);
-System.out.println("[RepositoryService] ✅ Pokal für neue Saison initialisiert!");
+		System.out.println("[RepositoryService] 🏆 Initialisiere Pokal für neue Saison " + (currentSeason + 1) + "...");
+		cupService.initializeAllCupTournaments(currentSeason + 1);
+		System.out.println("[RepositoryService] ✅ Pokal für neue Saison initialisiert!");
 
 // === CPU-TEAMS KI-ENTSCHEIDUNGEN ===
 // Lasse CPU-Teams Sponsoren wählen, Stadion ausbauen, Jugend rekrutieren
-cpuTeamAIService.processCpuTeamDecisions();
+		cpuTeamAIService.processCpuTeamDecisions();
 
 // === CPU-TEAMS AUFSTELLUNGEN OPTIMIEREN ===
 // Nach Saison-Reset haben viele Teams neue Spieler oder verlorene Spieler
-System.out.println("[RepositoryService] 📋 Optimiere Aufstellungen aller CPU-Teams...");
-cpuLineupOptimizerService.optimizeAllCpuTeamLineups();
+		System.out.println("[RepositoryService] 📋 Optimiere Aufstellungen aller CPU-Teams...");
+		cpuLineupOptimizerService.optimizeAllCpuTeamLineups();
 
-System.out.println("[RepositoryService] ✅ Saison-Reset abgeschlossen für alle Länder!");
-}
+		System.out.println("[RepositoryService] ✅ Saison-Reset abgeschlossen für alle Länder!");
+	}
 
 	/**
 	 * Führt Auf-/Abstieg für ein spezifisches Land durch

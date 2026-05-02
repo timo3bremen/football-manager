@@ -108,6 +108,16 @@ public class PlayerController {
 		map.put("fitness", player.getFitness());
 		map.put("isFreeAgent", player.isFreeAgent());
 
+		// Füge Verletzungsinformationen hinzu
+		map.put("isInjured", player.isInjured());
+		map.put("injuryName", player.getInjuryName());
+		map.put("injuryMatchdaysRemaining", player.getInjuryMatchdaysRemaining());
+
+		// Füge Suspensionsinformationen hinzu
+		map.put("isSuspended", player.isSuspended());
+		map.put("suspensionMatchesRemaining", player.getSuspensionMatchesRemaining());
+		map.put("suspensionReason", player.getSuspensionReason());
+
 		// Füge Teamnamen hinzu wenn verfügbar
 		if (player.getTeamId() != null && player.getTeamId() > 0) {
 			Team team = teamRepository.findById(player.getTeamId()).orElse(null);

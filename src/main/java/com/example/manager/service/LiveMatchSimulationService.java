@@ -26,10 +26,13 @@ import com.example.manager.model.Matchday;
 import com.example.manager.model.Player;
 import com.example.manager.model.SimulationMessage;
 import com.example.manager.model.Team;
+import com.example.manager.repository.CupMatchRepository;
+import com.example.manager.repository.CupTournamentRepository;
 import com.example.manager.repository.LineupRepository;
 import com.example.manager.repository.MatchEventRepository;
 import com.example.manager.repository.MatchRepository;
 import com.example.manager.repository.MatchdayRepository;
+import com.example.manager.repository.PlayerPerformanceRepository;
 import com.example.manager.repository.PlayerRepository;
 import com.example.manager.repository.SimulationMessageRepository;
 import com.example.manager.repository.TeamRepository;
@@ -41,6 +44,9 @@ import com.example.manager.repository.TransactionRepository;
  */
 @Service
 public class LiveMatchSimulationService {
+
+	@Autowired
+	private RepositoryService repositoryService;
 
 	@Autowired
 	private SimpMessagingTemplate messagingTemplate;
@@ -61,9 +67,6 @@ public class LiveMatchSimulationService {
 	private MatchEventRepository matchEventRepository;
 
 	@Autowired
-	private RepositoryService repositoryService;
-
-	@Autowired
 	private SimulationMessageRepository simulationMessageRepository;
 
 	@Autowired
@@ -73,16 +76,19 @@ public class LiveMatchSimulationService {
 	private PlayerRatingService playerRatingService;
 
 	@Autowired
-	private com.example.manager.repository.PlayerPerformanceRepository playerPerformanceRepository;
+	private PlayerPerformanceRepository playerPerformanceRepository;
 
 	@Autowired
-	private com.example.manager.repository.CupTournamentRepository cupTournamentRepository;
-	
+	private CupTournamentRepository cupTournamentRepository;
+
 	@Autowired
-	private com.example.manager.repository.CupMatchRepository cupMatchRepository;
-	
+	private CupMatchRepository cupMatchRepository;
+
 	@Autowired
 	private CupService cupService;
+
+	@Autowired
+	private InjuryService injuryService;
 
 	private final Random random = new Random();
 	private boolean simulationRunning = false;
@@ -282,8 +288,8 @@ public class LiveMatchSimulationService {
 	}
 
 	/**
-	 * Generiert Event-Timeline für ein Match
-	 * Prüft auch ob Teams genug Spieler haben (min. 7)
+	 * Generiert Event-Timeline für ein Match Prüft auch ob Teams genug Spieler
+	 * haben (min. 7)
 	 */
 	private List<SimulationEvent> generateEventTimeline(Match match) {
 		List<SimulationEvent> events = new ArrayList<>();
@@ -297,33 +303,44 @@ public class LiveMatchSimulationService {
 		if (homeTeam == null || awayTeam == null) {
 			return events;
 		}
-		
+
 		// Prüfe ob Teams genug Spieler in der Aufstellung haben (min. 7)
 		String homeFormation = homeTeam.getActiveFormation() != null ? homeTeam.getActiveFormation() : "4-4-2";
 		String awayFormation = awayTeam.getActiveFormation() != null ? awayTeam.getActiveFormation() : "4-4-2";
-		
+
 		List<LineupSlot> homeLineup = lineupRepository.findByTeamIdAndFormationId(homeTeamId, homeFormation);
 		List<LineupSlot> awayLineup = lineupRepository.findByTeamIdAndFormationId(awayTeamId, awayFormation);
-		
+
 		int homePlayerCount = (int) homeLineup.stream().filter(s -> s.getPlayerId() != null).count();
 		int awayPlayerCount = (int) awayLineup.stream().filter(s -> s.getPlayerId() != null).count();
-		
-		System.out.println("[Match] " + homeTeam.getName() + " hat " + homePlayerCount + " Spieler, " + 
-				awayTeam.getName() + " hat " + awayPlayerCount + " Spieler");
-		
+
+		System.out.println("[Match] " + homeTeam.getName() + " hat " + homePlayerCount + " Spieler, "
+				+ awayTeam.getName() + " hat " + awayPlayerCount + " Spieler");
+
 		// Wenn ein Team weniger als 7 Spieler hat: Automatische 0:3 Niederlage
 		if (homePlayerCount < 7) {
-			System.out.println("[Match] ⚠️ " + homeTeam.getName() + " hat zu wenig Spieler (<7)! Automatische 0:3 Niederlage!");
-			// Setze direkt Ergebnis ohne Events zu generieren
-			match.setHomeGoals(0);
-			match.setAwayGoals(3);
-			return events; // Leere Event-Liste
+			System.out.println(
+					"[Match] ⚠️ " + homeTeam.getName() + " hat zu wenig Spieler (<7)! Automatische 0:3 Niederlage!");
+			// Erstelle 3 MatchEvent-Einträge für die automatischen Tore (damit sie in
+			// finishSimulation gezählt werden)
+			for (int i = 0; i < 3; i++) {
+				MatchEvent forFeitGoal = new MatchEvent(match.getId(), awayTeamId, null, "Forfeit-Tor " + (i + 1),
+						"goal", 1 + i * 30);
+				matchEventRepository.save(forFeitGoal);
+			}
+			return events; // Leere Event-Liste - keine echten Spielereignisse
 		}
 		if (awayPlayerCount < 7) {
-			System.out.println("[Match] ⚠️ " + awayTeam.getName() + " hat zu wenig Spieler (<7)! Automatische 0:3 Niederlage!");
-			match.setHomeGoals(3);
-			match.setAwayGoals(0);
-			return events; // Leere Event-Liste
+			System.out.println(
+					"[Match] ⚠️ " + awayTeam.getName() + " hat zu wenig Spieler (<7)! Automatische 0:3 Niederlage!");
+			// Erstelle 3 MatchEvent-Einträge für die automatischen Tore (damit sie in
+			// finishSimulation gezählt werden)
+			for (int i = 0; i < 3; i++) {
+				MatchEvent forFeitGoal = new MatchEvent(match.getId(), homeTeamId, null, "Forfeit-Tor " + (i + 1),
+						"goal", 1 + i * 30);
+				matchEventRepository.save(forFeitGoal);
+			}
+			return events; // Leere Event-Liste - keine echten Spielereignisse
 		}
 
 		int homeStrength = calculateTeamStrength(homeTeamId);
@@ -427,17 +444,19 @@ public class LiveMatchSimulationService {
 						assist = possibleAssisters.get(random.nextInt(possibleAssisters.size()));
 					}
 				}
-				
+
 				String goalText;
 				if (assist != null) {
-					goalText = "⚽ TOR! " + scorer.getName() + " trifft für " + homeTeam.getName() + "! Vorlage von " + assist.getName() + "!";
+					goalText = "⚽ TOR! " + scorer.getName() + " trifft für " + homeTeam.getName() + "! Vorlage von "
+							+ assist.getName() + "!";
 				} else {
 					goalText = "⚽ TOR! " + scorer.getName() + " erzielt ein Tor für " + homeTeam.getName() + "!";
 				}
-				
-				SimulationEvent goalEvent = new SimulationEvent("goal", minute, homeTeam.getName(), scorer.getName(), goalText, true);
+
+				SimulationEvent goalEvent = new SimulationEvent("goal", minute, homeTeam.getName(), scorer.getId(),
+						goalText, true);
 				if (assist != null) {
-					goalEvent.assistPlayerName = assist.getName();
+					goalEvent.assistPlayerId = assist.getId();
 				}
 				events.add(goalEvent);
 			}
@@ -462,23 +481,26 @@ public class LiveMatchSimulationService {
 						assist = possibleAssisters.get(random.nextInt(possibleAssisters.size()));
 					}
 				}
-				
+
 				String goalText;
 				if (assist != null) {
-					goalText = "⚽ TOR! " + scorer.getName() + " trifft für " + awayTeam.getName() + "! Vorlage von " + assist.getName() + "!";
+					goalText = "⚽ TOR! " + scorer.getName() + " trifft für " + awayTeam.getName() + "! Vorlage von "
+							+ assist.getName() + "!";
 				} else {
 					goalText = "⚽ TOR! " + scorer.getName() + " erzielt ein Tor für " + awayTeam.getName() + "!";
 				}
-				
-				SimulationEvent goalEvent = new SimulationEvent("goal", minute, awayTeam.getName(), scorer.getName(), goalText, false);
+
+				SimulationEvent goalEvent = new SimulationEvent("goal", minute, awayTeam.getName(), scorer.getId(),
+						goalText, false);
 				if (assist != null) {
-					goalEvent.assistPlayerName = assist.getName();
+					goalEvent.assistPlayerId = assist.getId();
 				}
 				events.add(goalEvent);
 			}
 		}
 
-		// Generiere MEHR DETAILLIERTE Chancen (10-20 pro Team, alle 2 Minuten mindestens eine)
+		// Generiere MEHR DETAILLIERTE Chancen (10-20 pro Team, alle 2 Minuten
+		// mindestens eine)
 		int homeChances = 10 + random.nextInt(11); // 10-20
 		int awayChances = 10 + random.nextInt(11);
 
@@ -486,17 +508,19 @@ public class LiveMatchSimulationService {
 			int minute = 1 + random.nextInt(89);
 			Player player = homePlayers.isEmpty() ? null : homePlayers.get(random.nextInt(homePlayers.size()));
 			if (player != null) {
-				String[] chanceTexts = { 
-					player.getName() + " hat eine gute Chance, aber der Ball geht knapp am Tor vorbei!",
-					player.getName() + " zieht von der Strafraumgrenze ab - der Torwart pariert stark!",
-					"Tolle Kombination von " + homeTeam.getName() + "! " + player.getName() + " schießt, aber knapp daneben!",
-					player.getName() + " mit einem Fernschuss - der Ball rauscht nur wenige Zentimeter am Pfosten vorbei!",
-					"Kopfballchance für " + player.getName() + " nach einer Ecke - zu ungenau!",
-					player.getName() + " wird von der Abwehr in letzter Sekunde gestoppt!",
-					"Konter von " + homeTeam.getName() + "! " + player.getName() + " läuft alleine auf das Tor zu, aber der Torwart rettet!",
-					player.getName() + " nimmt den Ball an und schießt sofort - der Keeper hält spektakulär!"
-				};
-				events.add(new SimulationEvent("chance", minute, homeTeam.getName(), player.getName(),
+				String[] chanceTexts = {
+						player.getName() + " hat eine gute Chance, aber der Ball geht knapp am Tor vorbei!",
+						player.getName() + " zieht von der Strafraumgrenze ab - der Torwart pariert stark!",
+						"Tolle Kombination von " + homeTeam.getName() + "! " + player.getName()
+								+ " schießt, aber knapp daneben!",
+						player.getName()
+								+ " mit einem Fernschuss - der Ball rauscht nur wenige Zentimeter am Pfosten vorbei!",
+						"Kopfballchance für " + player.getName() + " nach einer Ecke - zu ungenau!",
+						player.getName() + " wird von der Abwehr in letzter Sekunde gestoppt!",
+						"Konter von " + homeTeam.getName() + "! " + player.getName()
+								+ " läuft alleine auf das Tor zu, aber der Torwart rettet!",
+						player.getName() + " nimmt den Ball an und schießt sofort - der Keeper hält spektakulär!" };
+				events.add(new SimulationEvent("chance", minute, homeTeam.getName(), player.getId(),
 						chanceTexts[random.nextInt(chanceTexts.length)], true));
 			}
 		}
@@ -505,125 +529,130 @@ public class LiveMatchSimulationService {
 			int minute = 1 + random.nextInt(89);
 			Player player = awayPlayers.isEmpty() ? null : awayPlayers.get(random.nextInt(awayPlayers.size()));
 			if (player != null) {
-				String[] chanceTexts = { 
-					player.getName() + " hat eine gute Chance, aber der Ball geht knapp am Tor vorbei!",
-					player.getName() + " zieht von der Strafraumgrenze ab - der Torwart pariert stark!",
-					"Tolle Kombination von " + awayTeam.getName() + "! " + player.getName() + " schießt, aber knapp daneben!",
-					player.getName() + " mit einem Fernschuss - der Ball rauscht nur wenige Zentimeter am Pfosten vorbei!",
-					"Kopfballchance für " + player.getName() + " nach einer Ecke - zu ungenau!",
-					player.getName() + " wird von der Abwehr in letzter Sekunde gestoppt!",
-					"Konter von " + awayTeam.getName() + "! " + player.getName() + " läuft alleine auf das Tor zu, aber der Torwart rettet!",
-					player.getName() + " nimmt den Ball an und schießt sofort - der Keeper hält spektakulär!"
-				};
-				events.add(new SimulationEvent("chance", minute, awayTeam.getName(), player.getName(),
+				String[] chanceTexts = {
+						player.getName() + " hat eine gute Chance, aber der Ball geht knapp am Tor vorbei!",
+						player.getName() + " zieht von der Strafraumgrenze ab - der Torwart pariert stark!",
+						"Tolle Kombination von " + awayTeam.getName() + "! " + player.getName()
+								+ " schießt, aber knapp daneben!",
+						player.getName()
+								+ " mit einem Fernschuss - der Ball rauscht nur wenige Zentimeter am Pfosten vorbei!",
+						"Kopfballchance für " + player.getName() + " nach einer Ecke - zu ungenau!",
+						player.getName() + " wird von der Abwehr in letzter Sekunde gestoppt!",
+						"Konter von " + awayTeam.getName() + "! " + player.getName()
+								+ " läuft alleine auf das Tor zu, aber der Torwart rettet!",
+						player.getName() + " nimmt den Ball an und schießt sofort - der Keeper hält spektakulär!" };
+				events.add(new SimulationEvent("chance", minute, awayTeam.getName(), player.getId(),
 						chanceTexts[random.nextInt(chanceTexts.length)], false));
 			}
 		}
-		
+
 		// Generiere ZUSÄTZLICHE allgemeine Spielaktionen (15-25 pro Team)
 		int homeActions = 15 + random.nextInt(11);
 		int awayActions = 15 + random.nextInt(11);
-		
+
 		for (int i = 0; i < homeActions; i++) {
 			int minute = 1 + random.nextInt(89);
 			Player player = homePlayers.isEmpty() ? null : homePlayers.get(random.nextInt(homePlayers.size()));
 			if (player != null) {
 				String[] actionTexts = {
-					player.getName() + " setzt sich im Mittelfeld durch und spielt einen guten Pass!",
-					player.getName() + " gewinnt den Zweikampf und leitet einen Angriff ein!",
-					"Starke Grätsche von " + player.getName() + " - der Ball ist erobert!",
-					player.getName() + " mit einer präzisen Flanke in den Strafraum!",
-					player.getName() + " dribbelt sich durch, aber verliert dann den Ball.",
-					"Guter Laufweg von " + player.getName() + ", aber der Pass kommt nicht an.",
-					player.getName() + " blockt einen gegnerischen Schuss!",
-					player.getName() + " mit einer wichtigen Balleroberung im eigenen Drittel!"
-				};
-				events.add(new SimulationEvent("action", minute, homeTeam.getName(), player.getName(),
+						player.getName() + " setzt sich im Mittelfeld durch und spielt einen guten Pass!",
+						player.getName() + " gewinnt den Zweikampf und leitet einen Angriff ein!",
+						"Starke Grätsche von " + player.getName() + " - der Ball ist erobert!",
+						player.getName() + " mit einer präzisen Flanke in den Strafraum!",
+						player.getName() + " dribbelt sich durch, aber verliert dann den Ball.",
+						"Guter Laufweg von " + player.getName() + ", aber der Pass kommt nicht an.",
+						player.getName() + " blockt einen gegnerischen Schuss!",
+						player.getName() + " mit einer wichtigen Balleroberung im eigenen Drittel!" };
+				events.add(new SimulationEvent("action", minute, homeTeam.getName(), player.getId(),
 						actionTexts[random.nextInt(actionTexts.length)], true));
 			}
 		}
-		
+
 		for (int i = 0; i < awayActions; i++) {
 			int minute = 1 + random.nextInt(89);
 			Player player = awayPlayers.isEmpty() ? null : awayPlayers.get(random.nextInt(awayPlayers.size()));
 			if (player != null) {
 				String[] actionTexts = {
-					player.getName() + " setzt sich im Mittelfeld durch und spielt einen guten Pass!",
-					player.getName() + " gewinnt den Zweikampf und leitet einen Angriff ein!",
-					"Starke Grätsche von " + player.getName() + " - der Ball ist erobert!",
-					player.getName() + " mit einer präzisen Flanke in den Strafraum!",
-					player.getName() + " dribbelt sich durch, aber verliert dann den Ball.",
-					"Guter Laufweg von " + player.getName() + ", aber der Pass kommt nicht an.",
-					player.getName() + " blockt einen gegnerischen Schuss!",
-					player.getName() + " mit einer wichtigen Balleroberung im eigenen Drittel!"
-				};
-				events.add(new SimulationEvent("action", minute, awayTeam.getName(), player.getName(),
+						player.getName() + " setzt sich im Mittelfeld durch und spielt einen guten Pass!",
+						player.getName() + " gewinnt den Zweikampf und leitet einen Angriff ein!",
+						"Starke Grätsche von " + player.getName() + " - der Ball ist erobert!",
+						player.getName() + " mit einer präzisen Flanke in den Strafraum!",
+						player.getName() + " dribbelt sich durch, aber verliert dann den Ball.",
+						"Guter Laufweg von " + player.getName() + ", aber der Pass kommt nicht an.",
+						player.getName() + " blockt einen gegnerischen Schuss!",
+						player.getName() + " mit einer wichtigen Balleroberung im eigenen Drittel!" };
+				events.add(new SimulationEvent("action", minute, awayTeam.getName(), player.getId(),
 						actionTexts[random.nextInt(actionTexts.length)], false));
 			}
 		}
-		
-		// Generiere FEHLER die zu Chancen führen (2-5 pro Team)
+
 		// Nach jedem Fehler folgt DIREKT eine Chance oder Tor für das andere Team
 		int homeErrors = 2 + random.nextInt(4);
 		int awayErrors = 2 + random.nextInt(4);
-		
+
 		for (int i = 0; i < homeErrors; i++) {
 			int minute = 1 + random.nextInt(88); // Max 88 damit danach noch Event kommt
 			Player player = homePlayers.isEmpty() ? null : homePlayers.get(random.nextInt(homePlayers.size()));
 			if (player != null) {
 				String[] errorTexts = {
-					"⚠️ Fehlpass von " + player.getName() + " - " + awayTeam.getName() + " kommt gefährlich vor das Tor!",
-					"⚠️ " + player.getName() + " verliert den Ball im Mittelfeld - gefährliche Situation!",
-					"⚠️ Ballverlust von " + player.getName() + " - " + awayTeam.getName() + " kontert sofort!",
-					"⚠️ " + player.getName() + " leistet sich einen Fehlpass - " + awayTeam.getName() + " schaltet schnell um!"
-				};
-				events.add(new SimulationEvent("error", minute, homeTeam.getName(), player.getName(),
+						"⚠️ Fehlpass von " + player.getName() + " - " + awayTeam.getName()
+								+ " kommt gefährlich vor das Tor!",
+						"⚠️ " + player.getName() + " verliert den Ball im Mittelfeld - gefährliche Situation!",
+						"⚠️ Ballverlust von " + player.getName() + " - " + awayTeam.getName() + " kontert sofort!",
+						"⚠️ " + player.getName() + " leistet sich einen Fehlpass - " + awayTeam.getName()
+								+ " schaltet schnell um!" };
+				events.add(new SimulationEvent("error", minute, homeTeam.getName(), player.getId(),
 						errorTexts[random.nextInt(errorTexts.length)], true));
-				
+
 				// Direkt danach: Chance oder Tor für Gegner (80% Chance, 20% Tor)
-				Player counterPlayer = awayPlayers.isEmpty() ? null : awayPlayers.get(random.nextInt(awayPlayers.size()));
+				Player counterPlayer = awayPlayers.isEmpty() ? null
+						: awayPlayers.get(random.nextInt(awayPlayers.size()));
 				if (counterPlayer != null) {
 					if (random.nextDouble() < 0.8) {
 						// Chance
 						String[] counterChanceTexts = {
-							counterPlayer.getName() + " nutzt den Fehler, aber der Schuss geht vorbei!",
-							"Konter! " + counterPlayer.getName() + " läuft alleine auf das Tor, aber der Keeper rettet!",
-							counterPlayer.getName() + " mit der Riesenchance nach Ballverlust - knapp daneben!",
-							"Gefährlich! " + counterPlayer.getName() + " zieht ab, aber der Ball verfehlt das Ziel!"
-						};
-						events.add(new SimulationEvent("chance", minute + 1, awayTeam.getName(), counterPlayer.getName(),
+								counterPlayer.getName() + " nutzt den Fehler, aber der Schuss geht vorbei!",
+								"Konter! " + counterPlayer.getName()
+										+ " läuft alleine auf das Tor, aber der Keeper rettet!",
+								counterPlayer.getName() + " mit der Riesenchance nach Ballverlust - knapp daneben!",
+								"Gefährlich! " + counterPlayer.getName()
+										+ " zieht ab, aber der Ball verfehlt das Ziel!" };
+						events.add(new SimulationEvent("chance", minute + 1, awayTeam.getName(), counterPlayer.getId(),
 								counterChanceTexts[random.nextInt(counterChanceTexts.length)], false));
 					}
 					// 20% Tor wird durch normale Tor-Generierung abgedeckt
 				}
 			}
 		}
-		
+
 		for (int i = 0; i < awayErrors; i++) {
 			int minute = 1 + random.nextInt(88);
 			Player player = awayPlayers.isEmpty() ? null : awayPlayers.get(random.nextInt(awayPlayers.size()));
 			if (player != null) {
 				String[] errorTexts = {
-					"⚠️ Fehlpass von " + player.getName() + " - " + homeTeam.getName() + " kommt gefährlich vor das Tor!",
-					"⚠️ " + player.getName() + " verliert den Ball im Mittelfeld - gefährliche Situation!",
-					"⚠️ Ballverlust von " + player.getName() + " - " + homeTeam.getName() + " kontert sofort!",
-					"⚠️ " + player.getName() + " leistet sich einen Fehlpass - " + homeTeam.getName() + " schaltet schnell um!"
-				};
-				events.add(new SimulationEvent("error", minute, awayTeam.getName(), player.getName(),
+						"⚠️ Fehlpass von " + player.getName() + " - " + homeTeam.getName()
+								+ " kommt gefährlich vor das Tor!",
+						"⚠️ " + player.getName() + " verliert den Ball im Mittelfeld - gefährliche Situation!",
+						"⚠️ Ballverlust von " + player.getName() + " - " + homeTeam.getName() + " kontert sofort!",
+						"⚠️ " + player.getName() + " leistet sich einen Fehlpass - " + homeTeam.getName()
+								+ " schaltet schnell um!" };
+				events.add(new SimulationEvent("error", minute, awayTeam.getName(), player.getId(),
 						errorTexts[random.nextInt(errorTexts.length)], false));
-				
+
 				// Direkt danach: Chance für Gegner
-				Player counterPlayer = homePlayers.isEmpty() ? null : homePlayers.get(random.nextInt(homePlayers.size()));
+				Player counterPlayer = homePlayers.isEmpty() ? null
+						: homePlayers.get(random.nextInt(homePlayers.size()));
 				if (counterPlayer != null) {
 					if (random.nextDouble() < 0.8) {
 						// Chance
 						String[] counterChanceTexts = {
-							counterPlayer.getName() + " nutzt den Fehler, aber der Schuss geht vorbei!",
-							"Konter! " + counterPlayer.getName() + " läuft alleine auf das Tor, aber der Keeper rettet!",
-							counterPlayer.getName() + " mit der Riesenchance nach Ballverlust - knapp daneben!",
-							"Gefährlich! " + counterPlayer.getName() + " zieht ab, aber der Ball verfehlt das Ziel!"
-						};
-						events.add(new SimulationEvent("chance", minute + 1, homeTeam.getName(), counterPlayer.getName(),
+								counterPlayer.getName() + " nutzt den Fehler, aber der Schuss geht vorbei!",
+								"Konter! " + counterPlayer.getName()
+										+ " läuft alleine auf das Tor, aber der Keeper rettet!",
+								counterPlayer.getName() + " mit der Riesenchance nach Ballverlust - knapp daneben!",
+								"Gefährlich! " + counterPlayer.getName()
+										+ " zieht ab, aber der Ball verfehlt das Ziel!" };
+						events.add(new SimulationEvent("chance", minute + 1, homeTeam.getName(), counterPlayer.getId(),
 								counterChanceTexts[random.nextInt(counterChanceTexts.length)], true));
 					}
 				}
@@ -640,52 +669,54 @@ public class LiveMatchSimulationService {
 
 			if (!players.isEmpty()) {
 				Player player = players.get(random.nextInt(players.size()));
-				events.add(new SimulationEvent("yellow_card", minute, teamName, player.getName(),
+				events.add(new SimulationEvent("yellow_card", minute, teamName, player.getId(),
 						"Gelbe Karte für " + player.getName() + " (" + teamName + ")! 🟨", isHome));
 			}
 		}
 
-		// Rote Karten (0-1 pro Match, selten)
-		if (random.nextDouble() < 0.1) {
+		if (random.nextDouble() < 0.95) { // Erhöht von 0.1 (10%) auf 0.25 (25%)
 			int minute = 30 + random.nextInt(60);
 			boolean isHome = random.nextBoolean();
-			List<Player> players = isHome ? homePlayers : awayPlayers;
-			String teamName = isHome ? homeTeam.getName() : awayTeam.getName();
+			List<Player> players = new ArrayList<>();
+			players.addAll(homePlayers);
+			players.addAll(awayPlayers);
 
 			if (!players.isEmpty()) {
 				Player player = players.get(random.nextInt(players.size()));
-				events.add(new SimulationEvent("red_card", minute, teamName, player.getName(),
-						"Rote Karte für " + player.getName() + " (" + teamName + ")! 🟥", isHome));
+				Team team = teamRepository.findById(player.getTeamId()).get();
+				events.add(new SimulationEvent("red_card", minute, team.getName(), player.getId(),
+						"Rote Karte für " + player.getName() + " (" + team.getName() + ")! 🟥", isHome));
 			}
 		}
 
-		// Verletzungen (0-2 pro Match, selten) MIT automatischer Auswechslung
-		int injuries = random.nextDouble() < 0.3 ? (random.nextBoolean() ? 1 : 2) : 0;
+		// === VERLETZUNGS-EVENTS ===
+		// Verletzungen (1-3 pro Match, erhöhte Chance zum Testen) MIT automatischer
+		// Auswechslung
+		int injuries = random.nextDouble() < 0.9 ? 1 : 0; // CHance 30% für 1 Verletzung
 		for (int i = 0; i < injuries; i++) {
 			int minute = 10 + random.nextInt(80);
 			boolean isHome = random.nextBoolean();
 			List<Player> players = isHome ? homePlayers : awayPlayers;
 			String teamName = isHome ? homeTeam.getName() : awayTeam.getName();
-			Long teamId = isHome ? homeTeamId : awayTeamId;
 
 			if (!players.isEmpty()) {
 				Player injuredPlayer = players.get(random.nextInt(players.size()));
-				
+
 				// Verletzungs-Event
-				events.add(new SimulationEvent("injury", minute, teamName, injuredPlayer.getName(),
-						injuredPlayer.getName() + " (" + teamName + ") verletzt sich! 🚑",
-						isHome));
-				
+				events.add(new SimulationEvent("injury", minute, teamName, injuredPlayer.getId(),
+						injuredPlayer.getName() + " (" + teamName + ") verletzt sich! 🚑", isHome));
+
 				// Finde Ersatzspieler (gleiche Position bevorzugt)
-				Player substitute = findSubstitute(teamId, injuredPlayer, players);
-				if (substitute != null) {
-					// Auswechslungs-Event direkt danach
-					SimulationEvent subEvent = new SimulationEvent("substitution", minute + 1, teamName, substitute.getName(),
-							"🔄 Auswechslung: " + injuredPlayer.getName() + " raus, " + substitute.getName() + " (" + substitute.getPosition() + ") rein",
-							isHome);
-					subEvent.injuredPlayerName = injuredPlayer.getName(); // Merke verletzten Spieler
-					events.add(subEvent);
-				}
+//				Player substitute = findSubstitute(teamId, injuredPlayer, players);
+//				if (substitute != null) {
+//					// Auswechslungs-Event direkt danach
+//					SimulationEvent subEvent = new SimulationEvent("substitution", minute + 1, teamName,
+//							substitute.getName(), "🔄 Auswechslung: " + injuredPlayer.getName() + " raus, "
+//									+ substitute.getName() + " (" + substitute.getPosition() + ") rein",
+//							isHome);
+//					subEvent.injuredPlayerName = injuredPlayer.getName(); // Merke verletzten Spieler
+//					events.add(subEvent);
+//				}
 			}
 		}
 
@@ -815,91 +846,106 @@ public class LiveMatchSimulationService {
 			}
 
 			// Speichere Tor-Event in Datenbank
-			Player player = findPlayerByName(event.playerName,
+			Player player = findPlayerById(event.playerId,
 					event.isHomeTeam ? match.getHomeTeamId() : match.getAwayTeamId());
 			if (player != null) {
 				MatchEvent matchEvent = new MatchEvent(match.getId(),
 						event.isHomeTeam ? match.getHomeTeamId() : match.getAwayTeamId(), player.getId(),
 						player.getName(), "goal", event.minute);
-				
+
 				// Speichere auch Vorlagengeber wenn vorhanden
-				if (event.assistPlayerName != null) {
-					Player assistPlayer = findPlayerByName(event.assistPlayerName,
-							event.isHomeTeam ? match.getHomeTeamId() : match.getAwayTeamId());
-					if (assistPlayer != null) {
-						matchEvent.setAssistPlayerId(assistPlayer.getId());
-						matchEvent.setAssistPlayerName(assistPlayer.getName());
-						
-						// Erstelle auch ein separates "assist" Event für den Vorlagengeber
-						MatchEvent assistEvent = new MatchEvent(match.getId(),
-								event.isHomeTeam ? match.getHomeTeamId() : match.getAwayTeamId(),
-								assistPlayer.getId(), assistPlayer.getName(), "assist", event.minute);
-						matchEventRepository.save(assistEvent);
-					}
+				Player assistPlayer = findPlayerById(event.assistPlayerId,
+						event.isHomeTeam ? match.getHomeTeamId() : match.getAwayTeamId());
+				if (assistPlayer != null) {
+					matchEvent.setAssistPlayerId(assistPlayer.getId());
+					matchEvent.setAssistPlayerName(assistPlayer.getName());
+
+					// Erstelle auch ein separates "assist" Event für den Vorlagengeber
+					MatchEvent assistEvent = new MatchEvent(match.getId(),
+							event.isHomeTeam ? match.getHomeTeamId() : match.getAwayTeamId(), assistPlayer.getId(),
+							assistPlayer.getName(), "assist", event.minute);
+					matchEventRepository.save(assistEvent);
 				}
-				
+
 				matchEventRepository.save(matchEvent);
 			}
 		}
-		
+
 		// Speichere auch andere Event-Typen (chance_created, error, etc.)
 		if ("chance".equals(event.type)) {
 			// Speichere als "chance_created" Event
-			Player player = findPlayerByName(event.playerName,
+			Player player = findPlayerById(event.playerId,
 					event.isHomeTeam ? match.getHomeTeamId() : match.getAwayTeamId());
 			if (player != null) {
 				MatchEvent matchEvent = new MatchEvent(match.getId(),
-						event.isHomeTeam ? match.getHomeTeamId() : match.getAwayTeamId(),
-						player.getId(), player.getName(), "chance_created", event.minute);
+						event.isHomeTeam ? match.getHomeTeamId() : match.getAwayTeamId(), player.getId(),
+						player.getName(), "chance_created", event.minute);
 				matchEventRepository.save(matchEvent);
 			}
 		}
-		
+
 		if ("error".equals(event.type)) {
 			// Speichere Fehler-Event
-			Player player = findPlayerByName(event.playerName,
+			Player player = findPlayerById(event.playerId,
 					event.isHomeTeam ? match.getHomeTeamId() : match.getAwayTeamId());
 			if (player != null) {
 				MatchEvent matchEvent = new MatchEvent(match.getId(),
-						event.isHomeTeam ? match.getHomeTeamId() : match.getAwayTeamId(),
-						player.getId(), player.getName(), "error", event.minute);
+						event.isHomeTeam ? match.getHomeTeamId() : match.getAwayTeamId(), player.getId(),
+						player.getName(), "error", event.minute);
 				matchEventRepository.save(matchEvent);
 			}
 		}
-		
+
 		if ("yellow_card".equals(event.type)) {
 			// Speichere Gelbe Karte
-			Player player = findPlayerByName(event.playerName,
+			Player player = findPlayerById(event.playerId,
 					event.isHomeTeam ? match.getHomeTeamId() : match.getAwayTeamId());
 			if (player != null) {
 				MatchEvent matchEvent = new MatchEvent(match.getId(),
-						event.isHomeTeam ? match.getHomeTeamId() : match.getAwayTeamId(),
-						player.getId(), player.getName(), "yellow_card", event.minute);
+						event.isHomeTeam ? match.getHomeTeamId() : match.getAwayTeamId(), player.getId(),
+						player.getName(), "yellow_card", event.minute);
 				matchEventRepository.save(matchEvent);
 			}
 		}
-		
+
 		if ("red_card".equals(event.type)) {
 			// Speichere Rote Karte
-			Player player = findPlayerByName(event.playerName,
+			Player player = findPlayerById(event.playerId,
 					event.isHomeTeam ? match.getHomeTeamId() : match.getAwayTeamId());
 			if (player != null) {
 				MatchEvent matchEvent = new MatchEvent(match.getId(),
-						event.isHomeTeam ? match.getHomeTeamId() : match.getAwayTeamId(),
-						player.getId(), player.getName(), "red_card", event.minute);
+						event.isHomeTeam ? match.getHomeTeamId() : match.getAwayTeamId(), player.getId(),
+						player.getName(), "red_card", event.minute);
+				matchEventRepository.save(matchEvent);
+				injuryService.trySuspendPlayer(player, repositoryService.getCurrentMatchday(),
+						event.isHomeTeam ? match.getHomeTeamId() : match.getAwayTeamId());
+			}
+		}
+
+		if ("injury".equals(event.type)) {
+			// Speichere Rote Karte
+			Player player = findPlayerById(event.playerId,
+					event.isHomeTeam ? match.getHomeTeamId() : match.getAwayTeamId());
+			if (player != null) {
+				injuryService.tryInjurePlayer(player, repositoryService.getCurrentMatchday(),
+						event.isHomeTeam ? match.getHomeTeamId() : match.getAwayTeamId());
+				MatchEvent matchEvent = new MatchEvent(match.getId(),
+						event.isHomeTeam ? match.getHomeTeamId() : match.getAwayTeamId(), player.getId(),
+						player.getName(), "injury", event.minute);
 				matchEventRepository.save(matchEvent);
 			}
 		}
 
 		// Sende Event mit aktuellem Spielstand
 		LiveMatchEventDTO liveEvent = new LiveMatchEventDTO(match.getId(), event.type, event.minute, event.teamName,
-				event.playerName, event.description, currentHomeGoals, currentAwayGoals);
+				playerRepository.findById(event.playerId).get().getName(), event.description, currentHomeGoals,
+				currentAwayGoals);
 
 		// Speichere Event in Datenbank für später Abfrage
 		SimulationMessage message = new SimulationMessage(match.getId(), null, // teamId wird nicht gespeichert, da es
 																				// ein globales Event ist
-				event.type, event.minute, event.teamName, event.playerName, event.description, currentHomeGoals,
-				currentAwayGoals, event.isHomeTeam);
+				event.type, event.minute, event.teamName, playerRepository.findById(event.playerId).get().getName(),
+				event.description, currentHomeGoals, currentAwayGoals, event.isHomeTeam);
 		simulationMessageRepository.save(message);
 
 		messagingTemplate.convertAndSend("/topic/live-match/" + match.getId(), liveEvent);
@@ -919,6 +965,7 @@ public class LiveMatchSimulationService {
 			int homeGoals = 0;
 			int awayGoals = 0;
 
+			// === VERARBEITE ROTE KARTEN ===
 			for (MatchEvent event : events) {
 				if ("goal".equals(event.getType())) {
 					if (event.getTeamId().equals(match.getHomeTeamId())) {
@@ -982,12 +1029,12 @@ public class LiveMatchSimulationService {
 					awayGoals, homeStrength, awayStrength);
 
 			// Erstelle PlayerPerformance-Einträge für beide Teams
-			createPlayerPerformances(match, match.getHomeTeamId(), 
-					homeTeam.getActiveFormation() != null ? homeTeam.getActiveFormation() : "4-4-2", 
-					homeGoals, awayGoals, true);
-			createPlayerPerformances(match, match.getAwayTeamId(), 
-					awayTeam.getActiveFormation() != null ? awayTeam.getActiveFormation() : "4-4-2", 
-					homeGoals, awayGoals, false);
+			createPlayerPerformances(match, match.getHomeTeamId(),
+					homeTeam.getActiveFormation() != null ? homeTeam.getActiveFormation() : "4-4-2", homeGoals,
+					awayGoals, true);
+			createPlayerPerformances(match, match.getAwayTeamId(),
+					awayTeam.getActiveFormation() != null ? awayTeam.getActiveFormation() : "4-4-2", homeGoals,
+					awayGoals, false);
 
 			// Trainiere Spieler mit Match-Kontext
 			trainPlayersAfterMatch(match, match.getHomeTeamId(),
@@ -1170,7 +1217,7 @@ public class LiveMatchSimulationService {
 		for (LineupSlot slot : lineup) {
 			if (slot.getPlayerId() != null) {
 				Player p = playerRepository.findById(slot.getPlayerId()).orElse(null);
-				if (p != null) {
+				if (p != null && !p.isSuspended()) { // Filtere gesperrte Spieler aus
 					players.add(p);
 				}
 			}
@@ -1207,81 +1254,69 @@ public class LiveMatchSimulationService {
 		return players.isEmpty() ? null : players.get(random.nextInt(players.size()));
 	}
 
-	private Player findPlayerByName(String name, Long teamId) {
-		List<Player> players = playerRepository.findByTeamId(teamId);
-		for (Player p : players) {
-			if (p.getName().equals(name)) {
-				return p;
-			}
-		}
-		return null;
+	private Player findPlayerById(long id, Long teamId) {
+		Player player = playerRepository.findById(id).get();
+		return player;
 	}
 
 	/**
 	 * Erstellt PlayerPerformance-Einträge für alle Spieler der Aufstellung
 	 */
-	private void createPlayerPerformances(Match match, Long teamId, String formationId, 
-			int homeGoals, int awayGoals, boolean isHomeTeam) {
+	private void createPlayerPerformances(Match match, Long teamId, String formationId, int homeGoals, int awayGoals,
+			boolean isHomeTeam) {
 		try {
 			List<LineupSlot> lineup = lineupRepository.findByTeamIdAndFormationId(teamId, formationId);
 			List<MatchEvent> allEvents = matchEventRepository.findByMatchId(match.getId());
-			
+
 			for (LineupSlot slot : lineup) {
 				if (slot.getPlayerId() != null) {
 					Player player = playerRepository.findById(slot.getPlayerId()).orElse(null);
 					if (player != null) {
 						// Erstelle Performance-Eintrag
-						com.example.manager.model.PlayerPerformance performance = 
-								new com.example.manager.model.PlayerPerformance(match.getId(), player.getId(), teamId);
-						
+						com.example.manager.model.PlayerPerformance performance = new com.example.manager.model.PlayerPerformance(
+								match.getId(), player.getId(), teamId);
+
 						// Zähle Statistiken aus MatchEvents
 						int goals = 0;
 						int assists = 0;
 						int yellowCards = 0;
 						int redCards = 0;
-						
+
 						for (MatchEvent event : allEvents) {
 							if (event.getPlayerId() != null && event.getPlayerId().equals(player.getId())) {
 								switch (event.getType()) {
-									case "goal":
-										goals++;
-										break;
-									case "assist":
-										assists++;
-										break;
-									case "yellow_card":
-										yellowCards++;
-										break;
-									case "red_card":
-										redCards++;
-										break;
+								case "goal":
+									goals++;
+									break;
+								case "assist":
+									assists++;
+									break;
+								case "yellow_card":
+									yellowCards++;
+									break;
+								case "red_card":
+									redCards++;
+									break;
 								}
 							}
 						}
-						
+
 						performance.setGoals(goals);
 						performance.setAssists(assists);
 						performance.setYellowCards(yellowCards);
 						performance.setRedCards(redCards);
 						performance.setMinutesPlayed(90); // Aktuell spielt jeder 90 Minuten
-						
+
 						// Berechne Spielernote
-						double rating = playerRatingService.calculatePlayerRating(
-								player.getId(), 
-								match.getId(), 
-								teamId,
-								homeGoals,
-								awayGoals,
-								isHomeTeam
-						);
+						double rating = playerRatingService.calculatePlayerRating(player.getId(), match.getId(), teamId,
+								homeGoals, awayGoals, isHomeTeam);
 						performance.setRating(rating);
-						
+
 						// Speichere Performance
 						playerPerformanceRepository.save(performance);
-						
-						System.out.println("[Performance] " + player.getName() + ": Note " + 
-								String.format("%.1f", rating) + ", " + goals + " Tore, " + 
-								assists + " Vorlagen");
+
+						System.out.println("[Performance] " + player.getName() + ": Note "
+								+ String.format("%.1f", rating) + ", " + goals + " Tore, " + assists + " Vorlagen");
 					}
 				}
 			}
@@ -1297,12 +1332,12 @@ public class LiveMatchSimulationService {
 	private void trainPlayersAfterMatch(Match match, Long teamId, String formationId) {
 		try {
 			List<LineupSlot> lineup = lineupRepository.findByTeamIdAndFormationId(teamId, formationId);
-			
+
 			// Ermittle ob Team Home oder Away ist
 			boolean isHomeTeam = match.getHomeTeamId().equals(teamId);
 			int homeGoals = match.getHomeGoals() != null ? match.getHomeGoals() : 0;
 			int awayGoals = match.getAwayGoals() != null ? match.getAwayGoals() : 0;
-			
+
 			int totalSkillsImproved = 0;
 			int playersRated = 0;
 
@@ -1311,63 +1346,57 @@ public class LiveMatchSimulationService {
 					Player player = playerRepository.findById(slot.getPlayerId()).orElse(null);
 					if (player != null) {
 						// Berechne Spielernote basierend auf Performance
-						double rating = playerRatingService.calculatePlayerRating(
-							player.getId(), 
-							match.getId(), 
-							teamId,
-							homeGoals,
-							awayGoals,
-							isHomeTeam
-						);
-						
+						double rating = playerRatingService.calculatePlayerRating(player.getId(), match.getId(), teamId,
+								homeGoals, awayGoals, isHomeTeam);
+
 						// Speichere alte Skills zum Vergleich
-						int skillsBefore = player.getPace() + player.getDribbling() + player.getBallControl() +
-							player.getShooting() + player.getTackling() + player.getSliding() + 
-							player.getHeading() + player.getCrossing() + player.getPassing() + 
-							player.getAwareness() + player.getJumping() + player.getStamina() + 
-							player.getStrength();
-						
+						int skillsBefore = player.getPace() + player.getDribbling() + player.getBallControl()
+								+ player.getShooting() + player.getTackling() + player.getSliding()
+								+ player.getHeading() + player.getCrossing() + player.getPassing()
+								+ player.getAwareness() + player.getJumping() + player.getStamina()
+								+ player.getStrength();
+
 						// Trainiere basierend auf Note
 						playerRatingService.trainPlayerByRating(player, rating);
 						playerRepository.save(player);
-						
+
 						// Zähle verbesserte Skills
-						int skillsAfter = player.getPace() + player.getDribbling() + player.getBallControl() +
-							player.getShooting() + player.getTackling() + player.getSliding() + 
-							player.getHeading() + player.getCrossing() + player.getPassing() + 
-							player.getAwareness() + player.getJumping() + player.getStamina() + 
-							player.getStrength();
-						
+						int skillsAfter = player.getPace() + player.getDribbling() + player.getBallControl()
+								+ player.getShooting() + player.getTackling() + player.getSliding()
+								+ player.getHeading() + player.getCrossing() + player.getPassing()
+								+ player.getAwareness() + player.getJumping() + player.getStamina()
+								+ player.getStrength();
+
 						int improved = skillsAfter - skillsBefore;
 						if (improved > 0) {
 							totalSkillsImproved += improved;
-							System.out.println("[Training] " + player.getName() + " (Note: " + 
-								String.format("%.1f", rating) + ") verbesserte " + improved + " Skills");
+							System.out.println("[Training] " + player.getName() + " (Note: "
+									+ String.format("%.1f", rating) + ") verbesserte " + improved + " Skills");
 						}
-						
+
 						playersRated++;
 					}
 				}
 			}
-			
+
 			if (playersRated > 0) {
-				System.out.println("[Training] Team " + teamId + ": " + playersRated + 
-					" Spieler bewertet, " + totalSkillsImproved + " Skills insgesamt verbessert");
+				System.out.println("[Training] Team " + teamId + ": " + playersRated + " Spieler bewertet, "
+						+ totalSkillsImproved + " Skills insgesamt verbessert");
 			}
 		} catch (Exception e) {
 			System.err.println("[Training] Fehler: " + e.getMessage());
 			e.printStackTrace();
 		}
 	}
-	
+
 	/**
-	 * Findet einen Ersatzspieler für einen verletzten Spieler
-	 * Bevorzugt gleiche Position, sonst andere Feldspieler (kein GK)
+	 * Findet einen Ersatzspieler für einen verletzten Spieler Bevorzugt gleiche
+	 * Position, sonst andere Feldspieler (kein GK)
 	 */
 	private Player findSubstitute(Long teamId, Player injuredPlayer, List<Player> lineupPlayers) {
 		// Hole alle Spieler des Teams
 		List<Player> allPlayers = playerRepository.findByTeamId(teamId);
-		
+
 		// Entferne Spieler die bereits in der Aufstellung sind
 		List<Player> benchPlayers = new ArrayList<>();
 		for (Player p : allPlayers) {
@@ -1376,50 +1405,41 @@ public class LiveMatchSimulationService {
 				benchPlayers.add(p);
 			}
 		}
-		
+
 		if (benchPlayers.isEmpty()) {
 			return null; // Keine Ersatzspieler verfügbar
 		}
-		
+
 		// Versuche gleiche Position zu finden
 		String targetPosition = injuredPlayer.getPosition();
-		List<Player> samePositionPlayers = benchPlayers.stream()
-				.filter(p -> targetPosition.equals(p.getPosition()))
+		List<Player> samePositionPlayers = benchPlayers.stream().filter(p -> targetPosition.equals(p.getPosition()))
 				.collect(java.util.stream.Collectors.toList());
-		
+
 		if (!samePositionPlayers.isEmpty()) {
 			// Wähle besten Spieler der gleichen Position (höchstes Rating)
-			return samePositionPlayers.stream()
-					.max((a, b) -> Integer.compare(a.getRating(), b.getRating()))
+			return samePositionPlayers.stream().max((a, b) -> Integer.compare(a.getRating(), b.getRating()))
 					.orElse(null);
 		}
-		
+
 		// Wenn keine gleiche Position: Wähle besten Feldspieler
-		return benchPlayers.stream()
-				.max((a, b) -> Integer.compare(a.getRating(), b.getRating()))
-				.orElse(null);
+		return benchPlayers.stream().max((a, b) -> Integer.compare(a.getRating(), b.getRating())).orElse(null);
 	}
 
 	/**
-	 * Regeneriert Fitness aller Spieler im Team basierend auf ihrer Ausdauer
-	 * >95 Ausdauer -> +50 Fitness
-	 * >90 Ausdauer -> +47 Fitness
-	 * >85 Ausdauer -> +44 Fitness
-	 * >75 Ausdauer -> +41 Fitness
-	 * >70 Ausdauer -> +38 Fitness
-	 * >65 Ausdauer -> +35 Fitness
-	 * >60 Ausdauer -> +32 Fitness
-	 * <=60 Ausdauer -> +29 Fitness
+	 * Regeneriert Fitness aller Spieler im Team basierend auf ihrer Ausdauer >95
+	 * Ausdauer -> +50 Fitness >90 Ausdauer -> +47 Fitness >85 Ausdauer -> +44
+	 * Fitness >75 Ausdauer -> +41 Fitness >70 Ausdauer -> +38 Fitness >65 Ausdauer
+	 * -> +35 Fitness >60 Ausdauer -> +32 Fitness <=60 Ausdauer -> +29 Fitness
 	 */
 	private void regeneratePlayerFitness(Long teamId) {
 		try {
 			List<Player> players = playerRepository.findByTeamId(teamId);
-			
+
 			for (Player player : players) {
 				int stamina = player.getStamina();
 				int currentFitness = player.getFitness();
 				int regeneration = 0;
-				
+
 				if (stamina > 95) {
 					regeneration = 50;
 				} else if (stamina > 90) {
@@ -1437,14 +1457,14 @@ public class LiveMatchSimulationService {
 				} else {
 					regeneration = 29;
 				}
-				
+
 				// Addiere Regeneration, maximal 100
 				int newFitness = Math.min(100, currentFitness + regeneration);
 				player.setFitness(newFitness);
 				playerRepository.save(player);
-				
-				System.out.println("[Regeneration] " + player.getName() + ": " + currentFitness + " -> " + newFitness 
-					+ " (+" + regeneration + " durch " + stamina + " Stamina)");
+
+				System.out.println("[Regeneration] " + player.getName() + ": " + currentFitness + " -> " + newFitness
+						+ " (+" + regeneration + " durch " + stamina + " Stamina)");
 			}
 		} catch (Exception e) {
 			System.err.println("[Regeneration] Fehler: " + e.getMessage());
@@ -1589,18 +1609,18 @@ public class LiveMatchSimulationService {
 		String type;
 		int minute;
 		String teamName;
-		String playerName;
+		long playerId;
 		String description;
 		boolean isHomeTeam;
-		String assistPlayerName; // Für Vorlagen
-		String injuredPlayerName; // Für Auswechslungen nach Verletzung
+		long assistPlayerId; // Für Vorlagen
+		long injuredPlayerId; // Für Auswechslungen nach Verletzung
 
-		SimulationEvent(String type, int minute, String teamName, String playerName, String description,
+		SimulationEvent(String type, int minute, String teamName, long playerId, String description,
 				boolean isHomeTeam) {
 			this.type = type;
 			this.minute = minute;
 			this.teamName = teamName;
-			this.playerName = playerName;
+			this.playerId = playerId;
 			this.description = description;
 			this.isHomeTeam = isHomeTeam;
 		}
@@ -1656,8 +1676,8 @@ public class LiveMatchSimulationService {
 	}
 
 	/**
-	 * Startet die Live-Simulation für Pokalspiele des aktuellen Spieltags
-	 * Wird um 20:00 Uhr aufgerufen für Spieltage 3, 6, 9, 12, 15, 18
+	 * Startet die Live-Simulation für Pokalspiele des aktuellen Spieltags Wird um
+	 * 20:00 Uhr aufgerufen für Spieltage 3, 6, 9, 12, 15, 18
 	 */
 	@Transactional
 	public synchronized void startLiveCupSimulation() {
@@ -1674,10 +1694,8 @@ public class LiveMatchSimulationService {
 
 		// Finde alle Cup-Turniere für die aktuelle Saison
 		int currentSeason = repositoryService.getCurrentSeason();
-		List<com.example.manager.model.CupTournament> tournaments = 
-			cupTournamentRepository.findAll().stream()
-				.filter(t -> t.getSeason() == currentSeason)
-				.collect(java.util.stream.Collectors.toList());
+		List<com.example.manager.model.CupTournament> tournaments = cupTournamentRepository.findAll().stream()
+				.filter(t -> t.getSeason() == currentSeason).collect(java.util.stream.Collectors.toList());
 
 		if (tournaments.isEmpty()) {
 			throw new IllegalStateException("Keine Cup-Turniere für diese Saison gefunden!");
@@ -1692,12 +1710,12 @@ public class LiveMatchSimulationService {
 				cupService.generateCupRound(tournament, 1);
 				tournament = cupTournamentRepository.findById(tournament.getId()).orElse(tournament);
 			}
-			
+
 			// Sammle alle ausstehenden Matches für diese Runde
 			int currentRound = tournament.getCurrentRound();
-			List<com.example.manager.model.CupMatch> roundMatches = 
-				cupMatchRepository.findByTournamentIdAndRound(tournament.getId(), currentRound);
-			
+			List<com.example.manager.model.CupMatch> roundMatches = cupMatchRepository
+					.findByTournamentIdAndRound(tournament.getId(), currentRound);
+
 			for (com.example.manager.model.CupMatch match : roundMatches) {
 				if (!"completed".equals(match.getStatus())) {
 					allCupMatches.add(match);
@@ -1712,7 +1730,8 @@ public class LiveMatchSimulationService {
 		simulationRunning = true;
 		simulationStartTime = LocalDateTime.now();
 
-		System.out.println("[LiveCupSimulation] 🏆 Starte Live-Simulation für " + allCupMatches.size() + " Pokalspiele");
+		System.out
+				.println("[LiveCupSimulation] 🏆 Starte Live-Simulation für " + allCupMatches.size() + " Pokalspiele");
 
 		// Starte Simulation in separatem Thread
 		executor = Executors.newSingleThreadScheduledExecutor();
@@ -1730,8 +1749,7 @@ public class LiveMatchSimulationService {
 	 * Prüft ob ein Spieltag ein Pokalspiel-Tag ist (3, 6, 9, 12, 15, 18)
 	 */
 	private boolean isCupMatchday(int matchday) {
-		return matchday == 3 || matchday == 6 || matchday == 9 || 
-		       matchday == 12 || matchday == 15 || matchday == 18;
+		return matchday == 3 || matchday == 6 || matchday == 9 || matchday == 12 || matchday == 15 || matchday == 18;
 	}
 
 	/**
@@ -1752,7 +1770,8 @@ public class LiveMatchSimulationService {
 			long delayMillis = 100 + (minute - 1) * 300L;
 
 			executor.schedule(() -> {
-				for (Map.Entry<com.example.manager.model.CupMatch, List<SimulationEvent>> entry : eventTimelines.entrySet()) {
+				for (Map.Entry<com.example.manager.model.CupMatch, List<SimulationEvent>> entry : eventTimelines
+						.entrySet()) {
 					com.example.manager.model.CupMatch cupMatch = entry.getKey();
 					List<SimulationEvent> events = entry.getValue();
 
@@ -1843,14 +1862,16 @@ public class LiveMatchSimulationService {
 
 				String goalText;
 				if (assist != null) {
-					goalText = "⚽ TOR! " + scorer.getName() + " trifft für " + homeTeam.getName() + "! Vorlage von " + assist.getName() + "!";
+					goalText = "⚽ TOR! " + scorer.getName() + " trifft für " + homeTeam.getName() + "! Vorlage von "
+							+ assist.getName() + "!";
 				} else {
 					goalText = "⚽ TOR! " + scorer.getName() + " erzielt ein Tor für " + homeTeam.getName() + "!";
 				}
 
-				SimulationEvent goalEvent = new SimulationEvent("goal", minute, homeTeam.getName(), scorer.getName(), goalText, true);
+				SimulationEvent goalEvent = new SimulationEvent("goal", minute, homeTeam.getName(), scorer.getId(),
+						goalText, true);
 				if (assist != null) {
-					goalEvent.assistPlayerName = assist.getName();
+					goalEvent.assistPlayerId = assist.getId();
 				}
 				events.add(goalEvent);
 			}
@@ -1875,14 +1896,16 @@ public class LiveMatchSimulationService {
 
 				String goalText;
 				if (assist != null) {
-					goalText = "⚽ TOR! " + scorer.getName() + " trifft für " + awayTeam.getName() + "! Vorlage von " + assist.getName() + "!";
+					goalText = "⚽ TOR! " + scorer.getName() + " trifft für " + awayTeam.getName() + "! Vorlage von "
+							+ assist.getName() + "!";
 				} else {
 					goalText = "⚽ TOR! " + scorer.getName() + " erzielt ein Tor für " + awayTeam.getName() + "!";
 				}
 
-				SimulationEvent goalEvent = new SimulationEvent("goal", minute, awayTeam.getName(), scorer.getName(), goalText, false);
+				SimulationEvent goalEvent = new SimulationEvent("goal", minute, awayTeam.getName(), scorer.getId(),
+						goalText, false);
 				if (assist != null) {
-					goalEvent.assistPlayerName = assist.getName();
+					goalEvent.assistPlayerId = assist.getId();
 				}
 				events.add(goalEvent);
 			}
@@ -1896,14 +1919,11 @@ public class LiveMatchSimulationService {
 			int minute = 1 + random.nextInt(89);
 			Player player = homePlayers.isEmpty() ? null : homePlayers.get(random.nextInt(homePlayers.size()));
 			if (player != null) {
-				String[] chanceTexts = {
-					player.getName() + " hat eine Chance, aber knapp daneben!",
-					player.getName() + " schießt, der Keeper pariert!",
-					"Tolle Kombination! " + player.getName() + " schießt, knapp vorbei!",
-					player.getName() + " mit einem Fernschuss!",
-					"Kopfballchance für " + player.getName() + "!"
-				};
-				events.add(new SimulationEvent("chance", minute, homeTeam.getName(), player.getName(),
+				String[] chanceTexts = { player.getName() + " hat eine Chance, aber knapp daneben!",
+						player.getName() + " schießt, der Keeper pariert!",
+						"Tolle Kombination! " + player.getName() + " schießt, knapp vorbei!",
+						player.getName() + " mit einem Fernschuss!", "Kopfballchance für " + player.getName() + "!" };
+				events.add(new SimulationEvent("chance", minute, homeTeam.getName(), player.getId(),
 						chanceTexts[random.nextInt(chanceTexts.length)], true));
 			}
 		}
@@ -1912,14 +1932,11 @@ public class LiveMatchSimulationService {
 			int minute = 1 + random.nextInt(89);
 			Player player = awayPlayers.isEmpty() ? null : awayPlayers.get(random.nextInt(awayPlayers.size()));
 			if (player != null) {
-				String[] chanceTexts = {
-					player.getName() + " hat eine Chance, aber knapp daneben!",
-					player.getName() + " schießt, der Keeper pariert!",
-					"Tolle Kombination! " + player.getName() + " schießt, knapp vorbei!",
-					player.getName() + " mit einem Fernschuss!",
-					"Kopfballchance für " + player.getName() + "!"
-				};
-				events.add(new SimulationEvent("chance", minute, awayTeam.getName(), player.getName(),
+				String[] chanceTexts = { player.getName() + " hat eine Chance, aber knapp daneben!",
+						player.getName() + " schießt, der Keeper pariert!",
+						"Tolle Kombination! " + player.getName() + " schießt, knapp vorbei!",
+						player.getName() + " mit einem Fernschuss!", "Kopfballchance für " + player.getName() + "!" };
+				events.add(new SimulationEvent("chance", minute, awayTeam.getName(), player.getId(),
 						chanceTexts[random.nextInt(chanceTexts.length)], false));
 			}
 		}
@@ -1934,7 +1951,7 @@ public class LiveMatchSimulationService {
 
 			if (!players.isEmpty()) {
 				Player player = players.get(random.nextInt(players.size()));
-				events.add(new SimulationEvent("yellow_card", minute, teamName, player.getName(),
+				events.add(new SimulationEvent("yellow_card", minute, teamName, player.getId(),
 						"Gelbe Karte für " + player.getName() + "! 🟨", isHome));
 			}
 		}
@@ -1975,7 +1992,7 @@ public class LiveMatchSimulationService {
 	 */
 	private void sendLiveCupEvent(com.example.manager.model.CupMatch cupMatch, SimulationEvent event) {
 		LiveMatchEventDTO liveEvent = new LiveMatchEventDTO(null, event.type, event.minute, event.teamName,
-				event.playerName, event.description, null, null);
+				playerRepository.findById(event.playerId).get().getName(), event.description, null, null);
 
 		messagingTemplate.convertAndSend("/topic/live-cup-match/" + cupMatch.getId(), liveEvent);
 		messagingTemplate.convertAndSend("/topic/live-cup-match/all", liveEvent);
@@ -1985,7 +2002,7 @@ public class LiveMatchSimulationService {
 	 * Beendet die Cup-Simulation und speichert Ergebnisse
 	 */
 	@Transactional
-	private void finishCupSimulation(List<com.example.manager.model.CupMatch> cupMatches, 
+	private void finishCupSimulation(List<com.example.manager.model.CupMatch> cupMatches,
 			Map<com.example.manager.model.CupMatch, List<SimulationEvent>> eventTimelines) {
 		System.out.println("[LiveCupSimulation] ✅ Cup-Simulation beendet, speichere Ergebnisse...");
 
@@ -2016,10 +2033,10 @@ public class LiveMatchSimulationService {
 			Team awayTeam = teamRepository.findById(cupMatch.getAwayTeamId()).orElse(null);
 
 			if (homeTeam != null && awayTeam != null) {
-				String endMessage = "🏆 Pokalspiel Abpfiff: " + homeTeam.getName() + " " + homeGoals + " : " 
-					+ awayGoals + " " + awayTeam.getName();
-				LiveMatchEventDTO endEvent = new LiveMatchEventDTO(null, "match_end", 90, "", "", endMessage,
-						homeGoals, awayGoals);
+				String endMessage = "🏆 Pokalspiel Abpfiff: " + homeTeam.getName() + " " + homeGoals + " : " + awayGoals
+						+ " " + awayTeam.getName();
+				LiveMatchEventDTO endEvent = new LiveMatchEventDTO(null, "match_end", 90, "", "", endMessage, homeGoals,
+						awayGoals);
 
 				messagingTemplate.convertAndSend("/topic/live-cup-match/" + cupMatch.getId(), endEvent);
 				messagingTemplate.convertAndSend("/topic/live-cup-match/all", endEvent);
@@ -2035,10 +2052,8 @@ public class LiveMatchSimulationService {
 		// Nach allen Matches: Vervollständige Cup-Runde
 		try {
 			int currentSeason = repositoryService.getCurrentSeason();
-			List<com.example.manager.model.CupTournament> tournaments = 
-				cupTournamentRepository.findAll().stream()
-					.filter(t -> t.getSeason() == currentSeason)
-					.collect(java.util.stream.Collectors.toList());
+			List<com.example.manager.model.CupTournament> tournaments = cupTournamentRepository.findAll().stream()
+					.filter(t -> t.getSeason() == currentSeason).collect(java.util.stream.Collectors.toList());
 
 			for (com.example.manager.model.CupTournament tournament : tournaments) {
 				cupService.completeCupRound(tournament, tournament.getCurrentRound());
