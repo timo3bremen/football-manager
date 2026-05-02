@@ -4,6 +4,12 @@ target/
 !**/src/main/**/target/
 !**/src/test/**/target/
 
+# Datenbank-Dateien
+*.db
+*.sqlite
+*.sqlite3
+*.db3
+
 ### STS ###
 .apt_generated
 .classpath
