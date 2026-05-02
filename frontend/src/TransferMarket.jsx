@@ -30,7 +30,7 @@ export default function TransferMarket(){
 
   // API base: when frontend is served separately from backend (npm start with Vite),
   // set VITE_API_URL or window.__API_BASE__ to point to backend (e.g. http://localhost:8080)
-  const API_BASE = (typeof window !== 'undefined' && window.__API_BASE__) || import.meta.env.VITE_API_URL || 'http://localhost:8080'
+ const API_BASE = 'http://192.168.178.21:8080'
 
   if (!team) {
     return (

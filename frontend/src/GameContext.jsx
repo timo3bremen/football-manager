@@ -546,7 +546,7 @@ export function GameProvider({children}){
     
     // Speichere die aktive Formation auf dem Backend - DISABLED da Endpoint nicht existiert
     // if (team && team.id) {
-    //   const API_BASE = (typeof window !== 'undefined' && window.__API_BASE__) || import.meta.env.VITE_API_URL || 'http://localhost:8080'
+    //  const API_BASE = 'http://192.168.178.21:8080'
     //   const authRaw = localStorage.getItem('fm_auth')
     //   const token = authRaw ? JSON.parse(authRaw).token : null
     //   const headers = { 'Content-Type': 'application/json' }

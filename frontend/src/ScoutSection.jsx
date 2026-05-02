@@ -10,7 +10,7 @@ export default function ScoutSection() {
   const [selectedDays, setSelectedDays] = useState(1)
   const [showStartModal, setShowStartModal] = useState(false)
 
-  const API_BASE = (typeof window !== 'undefined' && window.__API_BASE__) || import.meta.env.VITE_API_URL || 'http://localhost:8080'
+ const API_BASE = 'http://192.168.178.21:8080'
 
   const REGIONS = [
     'WestEuropa', 'SüdostAsien', 'SüdAmerika', 'Nordamerika', 

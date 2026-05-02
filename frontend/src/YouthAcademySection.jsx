@@ -6,7 +6,7 @@ export default function YouthAcademySection() {
   const [academy, setAcademy] = useState([])
   const [loading, setLoading] = useState(false)
 
-  const API_BASE = (typeof window !== 'undefined' && window.__API_BASE__) || import.meta.env.VITE_API_URL || 'http://localhost:8080'
+ const API_BASE = 'http://192.168.178.21:8080'
 
   useEffect(() => {
     if (team && team.id) {
