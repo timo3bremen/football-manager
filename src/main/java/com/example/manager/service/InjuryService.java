@@ -318,7 +318,7 @@ public class InjuryService {
 		}
 
 		// Verletzung anwenden
-		player.suspend(random.nextInt(3) + 1, "Rote Karte");
+		player.suspend(random.nextInt(3) + 2, "Rote Karte");
 		playerRepository.save(player);
 
 		// Entferne aus Aufstellung

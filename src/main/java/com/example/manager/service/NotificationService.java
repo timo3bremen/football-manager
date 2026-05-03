@@ -151,7 +151,7 @@ public class NotificationService {
 			return;
 		}
 
-		if (matchesOut >= 0) {
+		if (matchesOut <= 0) {
 			String title = "🟥 Rote Karte: " + playerName;
 			String content = String.format("Die Sperre von %s ist abgelaufen!", playerName);
 			messageService.createMessage(teamId, title, "Schiedsrichter", content, "suspension", player.getId());
