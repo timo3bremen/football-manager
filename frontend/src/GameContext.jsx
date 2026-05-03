@@ -98,7 +98,7 @@ export function GameProvider({children}){
   }catch(e){}
 
   function addTransaction({amount, type='income', desc='', category='other'}){
-    const t = { id: `t-${Date.now()}`, amount, type, desc, category, date: Date.now() }
+    const t = { id: `t-${Date.now()}`, amount, type, description: desc, category, createdAt: new Date().toISOString() }
     setTransactions(prev => [t, ...prev])
     setBalance(b => b + amount)
     
