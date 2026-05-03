@@ -1017,15 +1017,16 @@ public class RepositoryService {
 
 			Player p = new Player(playerData[0], 0, 0, (int) (Math.random() * 20) - 10, position, playerData[1]);
 
+			int age = 18 + rand.nextInt(17); // Age 18-34
+			p.setAge(age);
+
 			// Initialisiere alle Fähigkeiten nach der zugeordneten Division
 			p.initializeSkillsForDivision(playerDivision, rand);
 
-			int age = 18 + rand.nextInt(17); // Age 18-34
 			long baseSalary = (long) (Math.pow(p.getRating(), 2.5) * 1.2);
 			long salary = (baseSalary * age / 10) / 30; // Pro-Spiel Gehalt
 			int contractLength = 1 + rand.nextInt(3); // Contract 1-3 seasons (random)
 
-			p.setAge(age);
 			p.setSalary(salary);
 			p.setContractLength(contractLength);
 			p.setTeamId(team.getId());

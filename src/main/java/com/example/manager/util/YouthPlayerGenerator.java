@@ -189,19 +189,34 @@ public class YouthPlayerGenerator {
 	 * Mit den Wahrscheinlichkeiten: 60-70: 40%, 70-80: 30%, 80-90: 20%, 90-99: 10%
 	 */
 	private static int generatePotential(int skill, Random random) {
-		int minPotential = skill + 5;
-		int rand = random.nextInt(100);
-		int potential;
+		int minPotential = skill + 10;
+		int potentialBonus;
 
-		if (rand < 40) {
-			potential = 60 + random.nextInt(11);
-		} else if (rand < 70) {
-			potential = 70 + random.nextInt(11);
-		} else if (rand < 90) {
-			potential = 80 + random.nextInt(11);
+		if (skill < 50) {
+			potentialBonus = random.nextInt(39);
+		} else if (skill < 55) {
+			potentialBonus = random.nextInt(36);
+		} else if (skill < 60) {
+			potentialBonus = random.nextInt(33);
+		} else if (skill < 65) {
+			potentialBonus = random.nextInt(29);
+		} else if (skill < 70) {
+			potentialBonus = random.nextInt(26);
+		} else if (skill < 74) {
+			potentialBonus = random.nextInt(21);
+		} else if (skill < 78) {
+			potentialBonus = random.nextInt(20);
+		} else if (skill < 82) {
+			potentialBonus = random.nextInt(17);
+		} else if (skill < 86) {
+			potentialBonus = random.nextInt(14);
+		} else if (skill < 89) {
+			potentialBonus = random.nextInt(11);
 		} else {
-			potential = 90 + random.nextInt(10);
+			potentialBonus = random.nextInt(5);
 		}
+
+		int potential = skill + potentialBonus;
 
 		if (potential < minPotential) {
 			potential = minPotential;

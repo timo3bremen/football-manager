@@ -1,5 +1,7 @@
 package com.example.manager.model;
 
+import java.util.Random;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -126,34 +128,7 @@ public class Player {
 		this.form = form;
 	}
 
-	/** create player with explicit id (used when loading from DB) */
-	public Player(long id, String name, int rating, int overallPotential, int form) {
-		this.id = id;
-		this.name = name;
-		this.rating = rating;
-		this.overallPotential = overallPotential;
-		this.form = form;
-	}
-
-	public Player(String name, int rating, int overallPotential, int form, String position) {
-		this.name = name;
-		this.rating = rating;
-		this.overallPotential = overallPotential;
-		this.form = form;
-		this.position = position;
-	}
-
 	public Player(String name, int rating, int overallPotential, int form, String position, String country) {
-		this.name = name;
-		this.rating = rating;
-		this.overallPotential = overallPotential;
-		this.form = form;
-		this.position = position;
-		this.country = country;
-	}
-
-	public Player(long id, String name, int rating, int overallPotential, int form, String position, String country) {
-		this.id = id;
 		this.name = name;
 		this.rating = rating;
 		this.overallPotential = overallPotential;
@@ -441,10 +416,11 @@ public class Player {
 	/**
 	 * Berechnet das Rating aus dem Durchschnitt aller Fähigkeiten (außer Fitness)
 	 */
-	public void calculateRating() {
+	public int calculateRating() {
 		int sum = pace + dribbling + ballControl + shooting + tackling + sliding + heading + crossing + passing
 				+ awareness + jumping + stamina + strength;
 		this.rating = Math.round(sum / 13.0f);
+		return this.rating;
 	}
 
 	/**
@@ -515,19 +491,12 @@ public class Player {
 
 	/**
 	 * Berechnet den Marktwert basierend auf Rating, Alter und Vertragslaufzeit
-	 * REALISTISCHE FORMEL mit höheren Werten ab Rating 75+:
-	 * Rating 50: ~150K
-	 * Rating 60: ~500K
-	 * Rating 70: ~1.5M
-	 * Rating 75: ~3M
-	 * Rating 80: ~6M
-	 * Rating 85: ~12M
-	 * Rating 90: ~22M
-	 * Rating 95: ~40M
+	 * REALISTISCHE FORMEL mit höheren Werten ab Rating 75+: Rating 50: ~150K Rating
+	 * 60: ~500K Rating 70: ~1.5M Rating 75: ~3M Rating 80: ~6M Rating 85: ~12M
+	 * Rating 90: ~22M Rating 95: ~40M
 	 * 
-	 * Multiplikatoren:
-	 * - Alter (1.0 - 2.5): Jüngere Spieler deutlich wertvoller
-	 * - Vertrag (1.0 - 2.0): Längere Verträge wertvoller
+	 * Multiplikatoren: - Alter (1.0 - 2.5): Jüngere Spieler deutlich wertvoller -
+	 * Vertrag (1.0 - 2.0): Längere Verträge wertvoller
 	 */
 	public void calculateMarketValue() {
 		if (rating <= 0) {
@@ -539,66 +508,186 @@ public class Player {
 		// Moderate Progression ohne extreme Sprünge
 		long baseValue;
 		switch (rating) {
-		case 40: baseValue = 50_000; break;
-		case 41: baseValue = 60_000; break;
-		case 42: baseValue = 70_000; break;
-		case 43: baseValue = 80_000; break;
-		case 44: baseValue = 90_000; break;
-		case 45: baseValue = 100_000; break;
-		case 46: baseValue = 115_000; break;
-		case 47: baseValue = 130_000; break;
-		case 48: baseValue = 145_000; break;
-		case 49: baseValue = 160_000; break;
-		case 50: baseValue = 180_000; break;
-		case 51: baseValue = 200_000; break;
-		case 52: baseValue = 220_000; break;
-		case 53: baseValue = 245_000; break;
-		case 54: baseValue = 270_000; break;
-		case 55: baseValue = 300_000; break;
-		case 56: baseValue = 330_000; break;
-		case 57: baseValue = 365_000; break;
-		case 58: baseValue = 400_000; break;
-		case 59: baseValue = 440_000; break;
-		case 60: baseValue = 480_000; break;
-		case 61: baseValue = 525_000; break;
-		case 62: baseValue = 575_000; break;
-		case 63: baseValue = 625_000; break;
-		case 64: baseValue = 680_000; break;
-		case 65: baseValue = 740_000; break;
-		case 66: baseValue = 805_000; break;
-		case 67: baseValue = 875_000; break;
-		case 68: baseValue = 950_000; break;
-		case 69: baseValue = 1_030_000; break;
-		case 70: baseValue = 1_120_000; break;
-		case 71: baseValue = 1_220_000; break;
-		case 72: baseValue = 1_330_000; break;
-		case 73: baseValue = 1_450_000; break;
-		case 74: baseValue = 1_580_000; break;
-		case 75: baseValue = 1_720_000; break;
-		case 76: baseValue = 1_870_000; break;
-		case 77: baseValue = 2_030_000; break;
-		case 78: baseValue = 2_200_000; break;
-		case 79: baseValue = 2_390_000; break;
-		case 80: baseValue = 2_590_000; break;
-		case 81: baseValue = 2_810_000; break;
-		case 82: baseValue = 3_050_000; break;
-		case 83: baseValue = 3_310_000; break;
-		case 84: baseValue = 3_590_000; break;
-		case 85: baseValue = 3_900_000; break;
-		case 86: baseValue = 4_240_000; break;
-		case 87: baseValue = 4_610_000; break;
-		case 88: baseValue = 5_020_000; break;
-		case 89: baseValue = 5_470_000; break;
-		case 90: baseValue = 5_970_000; break;
-		case 91: baseValue = 6_520_000; break;
-		case 92: baseValue = 7_130_000; break;
-		case 93: baseValue = 7_800_000; break;
-		case 94: baseValue = 8_540_000; break;
-		case 95: baseValue = 9_360_000; break;
-		case 96: baseValue = 10_270_000; break;
-		case 97: baseValue = 11_280_000; break;
-		case 98: baseValue = 12_400_000; break;
-		case 99: baseValue = 13_650_000; break;
+		case 40:
+			baseValue = 50_000;
+			break;
+		case 41:
+			baseValue = 60_000;
+			break;
+		case 42:
+			baseValue = 70_000;
+			break;
+		case 43:
+			baseValue = 80_000;
+			break;
+		case 44:
+			baseValue = 90_000;
+			break;
+		case 45:
+			baseValue = 100_000;
+			break;
+		case 46:
+			baseValue = 115_000;
+			break;
+		case 47:
+			baseValue = 130_000;
+			break;
+		case 48:
+			baseValue = 145_000;
+			break;
+		case 49:
+			baseValue = 160_000;
+			break;
+		case 50:
+			baseValue = 180_000;
+			break;
+		case 51:
+			baseValue = 200_000;
+			break;
+		case 52:
+			baseValue = 220_000;
+			break;
+		case 53:
+			baseValue = 245_000;
+			break;
+		case 54:
+			baseValue = 270_000;
+			break;
+		case 55:
+			baseValue = 300_000;
+			break;
+		case 56:
+			baseValue = 330_000;
+			break;
+		case 57:
+			baseValue = 365_000;
+			break;
+		case 58:
+			baseValue = 400_000;
+			break;
+		case 59:
+			baseValue = 440_000;
+			break;
+		case 60:
+			baseValue = 480_000;
+			break;
+		case 61:
+			baseValue = 525_000;
+			break;
+		case 62:
+			baseValue = 575_000;
+			break;
+		case 63:
+			baseValue = 625_000;
+			break;
+		case 64:
+			baseValue = 680_000;
+			break;
+		case 65:
+			baseValue = 740_000;
+			break;
+		case 66:
+			baseValue = 805_000;
+			break;
+		case 67:
+			baseValue = 875_000;
+			break;
+		case 68:
+			baseValue = 950_000;
+			break;
+		case 69:
+			baseValue = 1_030_000;
+			break;
+		case 70:
+			baseValue = 1_120_000;
+			break;
+		case 71:
+			baseValue = 1_220_000;
+			break;
+		case 72:
+			baseValue = 1_330_000;
+			break;
+		case 73:
+			baseValue = 1_450_000;
+			break;
+		case 74:
+			baseValue = 1_580_000;
+			break;
+		case 75:
+			baseValue = 1_720_000;
+			break;
+		case 76:
+			baseValue = 1_870_000;
+			break;
+		case 77:
+			baseValue = 2_030_000;
+			break;
+		case 78:
+			baseValue = 2_200_000;
+			break;
+		case 79:
+			baseValue = 2_390_000;
+			break;
+		case 80:
+			baseValue = 2_590_000;
+			break;
+		case 81:
+			baseValue = 2_810_000;
+			break;
+		case 82:
+			baseValue = 3_050_000;
+			break;
+		case 83:
+			baseValue = 3_310_000;
+			break;
+		case 84:
+			baseValue = 3_590_000;
+			break;
+		case 85:
+			baseValue = 3_900_000;
+			break;
+		case 86:
+			baseValue = 4_240_000;
+			break;
+		case 87:
+			baseValue = 4_610_000;
+			break;
+		case 88:
+			baseValue = 5_020_000;
+			break;
+		case 89:
+			baseValue = 5_470_000;
+			break;
+		case 90:
+			baseValue = 5_970_000;
+			break;
+		case 91:
+			baseValue = 6_520_000;
+			break;
+		case 92:
+			baseValue = 7_130_000;
+			break;
+		case 93:
+			baseValue = 7_800_000;
+			break;
+		case 94:
+			baseValue = 8_540_000;
+			break;
+		case 95:
+			baseValue = 9_360_000;
+			break;
+		case 96:
+			baseValue = 10_270_000;
+			break;
+		case 97:
+			baseValue = 11_280_000;
+			break;
+		case 98:
+			baseValue = 12_400_000;
+			break;
+		case 99:
+			baseValue = 13_650_000;
+			break;
 		default:
 			// Falls außerhalb 40-99: Berechne dynamisch
 			if (rating < 40) {
@@ -615,67 +704,67 @@ public class Player {
 		double ageMultiplier;
 		switch (age) {
 		case 16:
-			ageMultiplier = 3.5; // Jüngstes Talent - MAXIMUM
+			ageMultiplier = 5.0; // Jüngstes Talent - MAXIMUM
 			break;
 		case 17:
-			ageMultiplier = 3.4;
+			ageMultiplier = 4.8;
 			break;
 		case 18:
-			ageMultiplier = 3.3;
+			ageMultiplier = 4.6;
 			break;
 		case 19:
-			ageMultiplier = 3.2;
+			ageMultiplier = 4.4;
 			break;
 		case 20:
-			ageMultiplier = 3.1;
+			ageMultiplier = 4.2;
 			break;
 		case 21:
-			ageMultiplier = 3.0;
+			ageMultiplier = 4.0;
 			break;
 		case 22:
-			ageMultiplier = 2.9;
+			ageMultiplier = 3.8;
 			break;
 		case 23:
-			ageMultiplier = 2.8;
+			ageMultiplier = 3.6;
 			break;
 		case 24:
-			ageMultiplier = 2.7;
+			ageMultiplier = 3.5;
 			break;
 		case 25:
-			ageMultiplier = 2.5;
+			ageMultiplier = 3.4;
 			break;
 		case 26:
-			ageMultiplier = 2.3;
+			ageMultiplier = 3.3;
 			break;
 		case 27:
-			ageMultiplier = 2.1;
+			ageMultiplier = 3.2;
 			break;
 		case 28:
-			ageMultiplier = 1.9;
+			ageMultiplier = 3.1;
 			break;
 		case 29:
-			ageMultiplier = 1.7;
+			ageMultiplier = 3.0;
 			break;
 		case 30:
-			ageMultiplier = 1.5;
+			ageMultiplier = 2.8;
 			break;
 		case 31:
-			ageMultiplier = 1.3;
+			ageMultiplier = 2.6;
 			break;
 		case 32:
-			ageMultiplier = 1.1;
+			ageMultiplier = 2.3;
 			break;
 		case 33:
-			ageMultiplier = 0.9;
+			ageMultiplier = 2.0;
 			break;
 		case 34:
-			ageMultiplier = 0.7;
+			ageMultiplier = 1.6;
 			break;
 		case 35:
-			ageMultiplier = 0.5;
+			ageMultiplier = 1.2;
 			break;
 		case 36:
-			ageMultiplier = 0.2; // Fast Karriereende - MINIMUM
+			ageMultiplier = 0.8; // Fast Karriereende - MINIMUM
 			break;
 		default:
 			// Jünger als 16 oder älter als 36
@@ -716,7 +805,77 @@ public class Player {
 			break;
 		}
 
-		this.marketValue = Math.round(baseValue * ageMultiplier * contractMultiplier);
+		double potentialMultiplier;
+		switch (overallPotential - rating) {
+		case 20:
+			potentialMultiplier = 3.0;
+			break;
+		case 19:
+			potentialMultiplier = 2.9;
+			break;
+		case 18:
+			potentialMultiplier = 2.8;
+			break;
+		case 17:
+			potentialMultiplier = 2.7;
+			break;
+		case 16:
+			potentialMultiplier = 2.6;
+			break;
+		case 15:
+			potentialMultiplier = 2.5;
+			break;
+		case 14:
+			potentialMultiplier = 2.4;
+			break;
+		case 13:
+			potentialMultiplier = 2.3;
+			break;
+		case 12:
+			potentialMultiplier = 2.2;
+			break;
+		case 11:
+			potentialMultiplier = 2.1;
+			break;
+		case 10:
+			potentialMultiplier = 2.0;
+			break;
+		case 9:
+			potentialMultiplier = 1.9;
+			break;
+		case 8:
+			potentialMultiplier = 1.8;
+			break;
+		case 7:
+			potentialMultiplier = 1.7;
+			break;
+		case 6:
+			potentialMultiplier = 1.6;
+			break;
+		case 5:
+			potentialMultiplier = 1.5;
+			break;
+		case 4:
+			potentialMultiplier = 1.4;
+			break;
+		case 3:
+			potentialMultiplier = 1.3;
+			break;
+		case 2:
+			potentialMultiplier = 1.2;
+			break;
+		case 1:
+			potentialMultiplier = 1.1;
+			break;
+		case 0:
+			potentialMultiplier = 1.0;
+			break;
+		default:
+			potentialMultiplier = 3.0;
+			break;
+		}
+
+		this.marketValue = Math.round(baseValue * ageMultiplier * contractMultiplier * potentialMultiplier);
 	}
 
 	@Override
@@ -735,7 +894,7 @@ public class Player {
 	 * und lasse andere bei niedrigeren Werten, um größere Spieler-Unterschiede zu
 	 * erzeugen
 	 */
-	public void initializeSkillsForDivision(int division, java.util.Random random) {
+	public void initializeSkillsForDivision(int division, Random random) {
 		int baseMin, baseMax, peakMin, peakMax;
 		switch (division) {
 		case 1:
@@ -803,8 +962,75 @@ public class Player {
 		// Initialisiere Fitness (max 100)
 		this.fitness = random.nextInt(101); // 0-100
 
+		// Berechne Rating und OverallPotential
+		int rating = calculateRating();
+
 		// Initialisiere Potentiale mit etwas höheren Werten (maximal 100)
-		int potentialBonus = 5 + random.nextInt(11); // 5-15 höher als die aktuelle Fähigkeit
+		int potentialBonus = 0;
+
+		if (rating < 50) {
+			potentialBonus = random.nextInt(35);
+		} else if (rating < 55) {
+			potentialBonus = random.nextInt(33);
+		} else if (rating < 60) {
+			potentialBonus = random.nextInt(30);
+		} else if (rating < 65) {
+			potentialBonus = random.nextInt(26);
+		} else if (rating < 70) {
+			potentialBonus = random.nextInt(23);
+		} else if (rating < 74) {
+			potentialBonus = random.nextInt(20);
+		} else if (rating < 78) {
+			potentialBonus = random.nextInt(17);
+		} else if (rating < 82) {
+			potentialBonus = random.nextInt(14);
+		} else if (rating < 86) {
+			potentialBonus = random.nextInt(11);
+		} else if (rating < 89) {
+			potentialBonus = random.nextInt(8);
+		} else {
+			potentialBonus = random.nextInt(5);
+		}
+
+		// ToDo degrading raitng for old Players (Potential < rating)
+		if (this.age > 34) {
+			potentialBonus = Math.max(0, potentialBonus - 10);
+		} else if (this.age > 33) {
+			potentialBonus = Math.max(0, potentialBonus - 9);
+		} else if (this.age > 32) {
+			potentialBonus = Math.max(0, potentialBonus - 7);
+		} else if (this.age > 31) {
+			potentialBonus = Math.max(0, potentialBonus - 5);
+		} else if (this.age > 30) {
+			potentialBonus = Math.max(0, potentialBonus - 3);
+		} else if (this.age > 29) {
+			potentialBonus = Math.max(0, potentialBonus - 1);
+		} else if (this.age > 28) {
+			potentialBonus = Math.max(0, potentialBonus);
+		} else if (this.age > 27) {
+			potentialBonus = Math.max(0, potentialBonus + 1);
+		} else if (this.age > 26) {
+			potentialBonus = Math.max(0, potentialBonus + 2);
+		} else if (this.age > 25) {
+			potentialBonus = Math.max(0, potentialBonus + 3);
+		} else if (this.age > 24) {
+			potentialBonus = Math.max(0, potentialBonus + 4);
+		} else if (this.age > 23) {
+			potentialBonus = Math.max(0, potentialBonus + 5);
+		} else if (this.age > 22) {
+			potentialBonus = Math.max(0, potentialBonus + 6);
+		} else if (this.age > 21) {
+			potentialBonus = Math.max(0, potentialBonus + 7);
+		} else if (this.age > 20) {
+			potentialBonus = Math.max(0, potentialBonus + 8);
+		} else if (this.age > 19) {
+			potentialBonus = Math.max(0, potentialBonus + 9);
+		} else if (this.age > 18) {
+			potentialBonus = Math.max(0, potentialBonus + 10);
+		} else {
+			potentialBonus = Math.max(0, potentialBonus + 11);
+		}
+
 		this.pacePotential = Math.min(100, pace + potentialBonus);
 		this.dribblingPotential = Math.min(100, dribbling + potentialBonus);
 		this.ballControlPotential = Math.min(100, ballControl + potentialBonus);
@@ -819,8 +1045,6 @@ public class Player {
 		this.staminaPotential = Math.min(100, stamina + potentialBonus);
 		this.strengthPotential = Math.min(100, strength + potentialBonus);
 
-		// Berechne Rating und OverallPotential
-		calculateRating();
 		calculateOverallPotential();
 	}
 
@@ -829,7 +1053,7 @@ public class Player {
 	 * wachsen, aber nur wenn: - Der aktuelle Wert kleiner als das Potential ist -
 	 * Zufallszahl <= 0.1 (10%)
 	 */
-	public void trainAfterMatch(java.util.Random random) {
+	public void trainAfterMatch(Random random) {
 		// Tempo
 		if (pace < pacePotential && random.nextDouble() <= 0.1) {
 			pace = Math.min(100, pace + 1);
@@ -885,47 +1109,6 @@ public class Player {
 
 		// Berechne neues Rating nach Training
 		calculateRating();
-	}
-
-	/**
-	 * Anwendung eines Starspieler-Bonus: +5 zu allen Skills und +3 zu allen
-	 * Potentialen Dies wird verwendet um 2 zufällige Spieler pro Team als
-	 * Star-Spieler zu markieren
-	 */
-	public void applyStarPlayerBonus() {
-		// Erhöhe alle Skills um 5 (maximal 100)
-		this.pace = Math.min(100, pace + 5);
-		this.dribbling = Math.min(100, dribbling + 5);
-		this.ballControl = Math.min(100, ballControl + 5);
-		this.shooting = Math.min(100, shooting + 5);
-		this.tackling = Math.min(100, tackling + 5);
-		this.sliding = Math.min(100, sliding + 5);
-		this.heading = Math.min(100, heading + 5);
-		this.crossing = Math.min(100, crossing + 5);
-		this.passing = Math.min(100, passing + 5);
-		this.awareness = Math.min(100, awareness + 5);
-		this.jumping = Math.min(100, jumping + 5);
-		this.stamina = Math.min(100, stamina + 5);
-		this.strength = Math.min(100, strength + 5);
-
-		// Erhöhe alle Potentiale um 3 (maximal 100)
-		this.pacePotential = Math.min(100, pacePotential + 3);
-		this.dribblingPotential = Math.min(100, dribblingPotential + 3);
-		this.ballControlPotential = Math.min(100, ballControlPotential + 3);
-		this.shootingPotential = Math.min(100, shootingPotential + 3);
-		this.tacklingPotential = Math.min(100, tacklingPotential + 3);
-		this.slidingPotential = Math.min(100, slidingPotential + 3);
-		this.headingPotential = Math.min(100, headingPotential + 3);
-		this.crossingPotential = Math.min(100, crossingPotential + 3);
-		this.passingPotential = Math.min(100, passingPotential + 3);
-		this.awarenessPotential = Math.min(100, awarenessPotential + 3);
-		this.jumpingPotential = Math.min(100, jumpingPotential + 3);
-		this.staminaPotential = Math.min(100, staminaPotential + 3);
-		this.strengthPotential = Math.min(100, strengthPotential + 3);
-
-		// Berechne Rating und OverallPotential neu
-		calculateRating();
-		calculateOverallPotential();
 	}
 
 	/**
