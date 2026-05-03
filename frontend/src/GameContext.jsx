@@ -35,6 +35,7 @@ export function GameProvider({children}){
   const [season, setSeason] = useState(1)
   const [userLeagueId, setUserLeagueId] = useState(null)
   const [userLeagueLabel, setUserLeagueLabel] = useState('Meine Liga')
+  const [unreadCount, setUnreadCount] = useState(0)
 
   // debug toggle (set localStorage fm_debug = '1' to enable)
   const debugEnabled = (()=>{
@@ -775,6 +776,8 @@ export function GameProvider({children}){
       currentMatchday, setCurrentMatchday, gameDay, season, setSeason,
      // NEW: User-Liga
      userLeagueId, setUserLeagueId, userLeagueLabel, setUserLeagueLabel,
+     // inbox
+     unreadCount, setUnreadCount,
      // allow setting team from auth flow
      setTeam,
      // logging helpers

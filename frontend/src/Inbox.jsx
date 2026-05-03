@@ -3,12 +3,12 @@ import { useGame } from './GameContext'
 import './inbox.css'
 
 export default function Inbox() {
-  const { team, token } = useGame()
+  const { team, token, setUnreadCount } = useGame()
   const [messages, setMessages] = useState([])
   const [selectedMessage, setSelectedMessage] = useState(null)
   const [filter, setFilter] = useState('all') // 'all', 'unread', 'contract', 'bonus', 'injury', 'suspension'
   const [loading, setLoading] = useState(false)
-  const [unreadCount, setUnreadCount] = useState(0)
+  const [unreadCountLocal, setUnreadCountLocal] = useState(0)
 
  const API_BASE = 'http://192.168.178.21:8080'
 
@@ -51,6 +51,7 @@ export default function Inbox() {
       const response = await fetch(`${API_BASE}/api/v2/messages/${team.id}/unread/count`)
       if (response.ok) {
         const count = await response.json()
+        setUnreadCountLocal(count)
         setUnreadCount(count)
       }
     } catch (error) {
@@ -127,7 +128,10 @@ export default function Inbox() {
   return (
     <div style={styles.container}>
       <div style={styles.header}>
-        <h2>📬 Postfach {unreadCount > 0 && <span style={styles.badge}>{unreadCount}</span>}</h2>
+        <h2 style={styles.headerTitle}>
+          📬 Postfach
+          {unreadCountLocal > 0 && <span style={styles.redCircleBadge}>{unreadCountLocal}</span>}
+        </h2>
       </div>
 
       <div style={styles.filterBar}>
@@ -135,7 +139,7 @@ export default function Inbox() {
           style={{...styles.filterBtn, ...(filter === 'all' ? styles.filterBtnActive : {})}}
           onClick={() => setFilter('all')}
         >
-          Alle ({messages.length})
+          Alle
         </button>
         <button 
           style={{...styles.filterBtn, ...(filter === 'unread' ? styles.filterBtnActive : {})}}
@@ -256,6 +260,24 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     gap: '8px'
+  },
+  headerTitle: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    margin: '0'
+  },
+  redCircleBadge: {
+    background: '#ef4444',
+    color: 'white',
+    borderRadius: '50%',
+    width: '24px',
+    height: '24px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '12px',
+    fontWeight: '700'
   },
   badge: {
     background: '#ef4444',

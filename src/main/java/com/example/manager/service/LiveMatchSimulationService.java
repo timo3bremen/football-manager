@@ -682,7 +682,7 @@ public class LiveMatchSimulationService {
 			boolean isHome = random.nextBoolean();
 			List<Player> players = new ArrayList<>();
 			players.addAll(homePlayers);
-			players.addAll(awayPlayers);
+//			players.addAll(awayPlayers);
 
 			if (!players.isEmpty()) {
 				Player player = players.get(random.nextInt(players.size()));
@@ -693,13 +693,13 @@ public class LiveMatchSimulationService {
 		}
 
 		// === VERLETZUNGS-EVENTS ===
-		// Verletzungen (1-3 pro Match, erhöhte Chance zum Testen) MIT automatischer
-		// Auswechslung
 		int injuries = random.nextDouble() < 0.99 ? 1 : 0; // Chance 30% für 1 Verletzung
 //		int injuries = random.nextDouble() < 0.05 ? 2 : random.nextDouble() < 0.2 ? 1 : 0;
 		for (int i = 0; i < injuries; i++) {
 			int minute = 10 + random.nextInt(80);
-			boolean isHome = random.nextBoolean();
+//			boolean isHome = random.nextBoolean();
+//			boolean isHome = false;
+			boolean isHome = true;
 			List<Player> players = isHome ? homePlayers : awayPlayers;
 			String teamName = isHome ? homeTeam.getName() : awayTeam.getName();
 

@@ -303,9 +303,10 @@ public class CpuTeamAIService {
 
 		// Starte Stadionausbau
 		LocalDateTime startTime = LocalDateTime.now();
-		// CPU-Teams bauen in 5-10 Tagen
-		int durationDays = 5 + random.nextInt(6);
-		LocalDateTime endTime = startTime.plusDays(durationDays);
+		// CPU-Teams verwenden die gleiche Logik wie Spieler-Teams:
+		// 1.000 Plätze = 1 Tag (86.400 Sekunden), also: seats / 1000 * 86400 Sekunden
+		long durationSeconds = (long) Math.round((seats / 1000.0) * 86400);
+		LocalDateTime endTime = startTime.plusSeconds(durationSeconds);
 
 		StadiumBuild build = new StadiumBuild(team.getId(), seats, seatType, cost, startTime, endTime);
 		stadiumBuildRepository.save(build);
@@ -316,7 +317,7 @@ public class CpuTeamAIService {
 
 		System.out
 				.println("[CPU-AI] 🏗️ Team " + team.getName() + " (Division " + division + ") startet Stadionausbau: "
-						+ seats + " " + seatType + " für " + cost + "€ (Dauer: " + durationDays + " Tage)");
+						+ seats + " " + seatType + " für " + cost + "€ (Dauer: " + (durationSeconds / 3600) + " Stunden)");
 	}
 
 	/**
